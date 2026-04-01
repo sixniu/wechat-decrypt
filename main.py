@@ -2,6 +2,7 @@
 WeChat Decrypt 一键启动
 
 python main.py          # 提取密钥 + 启动 Web UI
+python main.py web_new  # 提取密钥 + 启动全文版 Web UI
 python main.py decrypt  # 提取密钥 + 解密全部数据库
 """
 import json
@@ -103,11 +104,17 @@ def main():
         print()
         from monitor_web import main as start_web
         start_web()
+    elif cmd == "web_new":
+        print("[*] 启动全文版 Web UI...")
+        print()
+        from monitor_web_new import main as start_web
+        start_web()
     else:
         print(f"[!] 未知命令: {cmd}")
         print()
         print("用法:")
         print("  python main.py          启动实时消息监听 (Web UI)")
+        print("  python main.py web_new  启动全文版实时消息监听 (Web UI)")
         print("  python main.py decrypt  解密全部数据库到 decrypted/")
         sys.exit(1)
 
