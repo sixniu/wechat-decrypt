@@ -1,0 +1,18 @@
+{
+    "mysql": {
+        "host": "127.0.0.1",
+        "port": 3306,
+        "user": "root",
+        "password": "your-password",
+        "database": "your-database",
+        "charset": "utf8mb4"
+    },
+    "services": {
+        "jubensha_booking": {
+            "enabled": false,
+            "provider": "zhipu",
+            "raw_table": "jubensha_all_content",
+            "booking_table": "jubensha_booking"
+        }
+    }
+}

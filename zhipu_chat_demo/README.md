@@ -64,11 +64,14 @@ python -m zhipu_chat_demo.demo_jubensha_request
   "provider": "qwen",
   "data": [
     {
+      "user_name": "",
+      "user_id": "",
+      "booking_time": "2026-07-23 14:00",
       "script_name": "如故",
       "store_name": "玩聚",
-      "start_time": "2026-07-23 14:00",
-      "details": "原价上车",
-      "discount_type": "normal"
+      "script_details": "原价上车",
+      "discount_type": "normal",
+      "wechat_no": ""
     }
   ],
   "raw_text": "[...]"

@@ -18,6 +18,7 @@ import glob as glob_mod
 import zstandard as zstd
 from decode_image import extract_md5_from_packed_info, decrypt_dat_file, is_v2_format
 from key_utils import get_key_info, strip_key_metadata
+from services import dispatch_message_to_services
 
 _zstd_dctx = zstd.ZstdDecompressor()
 
@@ -1034,6 +1035,7 @@ class SessionMonitor:
                 if len(messages_log) > MAX_LOG:
                     messages_log = messages_log[-MAX_LOG:]
             broadcast_sse(msg_data)
+            dispatch_message_to_services(msg_data)
 
     def _query_msg_content(self, username, timestamp, base_type):
         """通用: 从 message_*.db 查找指定类型消息的 XML 内容
@@ -1434,6 +1436,7 @@ class SessionMonitor:
                     messages_log = messages_log[-MAX_LOG:]
 
             broadcast_sse(msg)
+            dispatch_message_to_services(msg)
 
             try:
                 now = time.time()

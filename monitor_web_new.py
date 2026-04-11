@@ -8,6 +8,7 @@ http://localhost:5678
 """
 import hashlib, struct, os, sys, json, time, sqlite3, io, threading, queue, traceback
 import hmac as hmac_mod
+import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -18,6 +19,12 @@ import glob as glob_mod
 import zstandard as zstd
 from decode_image import extract_md5_from_packed_info, decrypt_dat_file, is_v2_format
 from key_utils import get_key_info, strip_key_metadata
+from services import (
+    dispatch_message_to_services,
+    get_service_log_history,
+    set_service_log_sink,
+    shutdown_service_manager,
+)
 
 _zstd_dctx = zstd.ZstdDecompressor()
 
@@ -51,6 +58,17 @@ messages_lock = threading.Lock()
 MAX_LOG = 500
 _img_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix='img')
 _hidden_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hidden')
+_shutdown_event = threading.Event()
+
+
+def _safe_submit(executor, fn, *args):
+    """退出阶段线程池关闭后，静默忽略新的提交。"""
+    if _shutdown_event.is_set():
+        return None
+    try:
+        return executor.submit(fn, *args)
+    except RuntimeError:
+        return None
 
 # ---- Emoji 缓存 (md5 → {cdn_url, aes_key, encrypt_url}) ----
 _emoji_lookup = {}       # md5 → dict
@@ -306,8 +324,8 @@ class MonitorDBCache:
             return out_path
 
 
-def build_username_db_map():
-    """从已解密的 Name2Id 表构建 username → [db_keys] 映射
+def build_username_db_map(db_cache):
+    """从缓存解密后的 Name2Id 表构建 username → [db_keys] 映射
 
     同一个 username 可能存在于多个 message_N.db 中,
     按 DB 文件修改时间倒序排列（最新的排前面）。
@@ -323,13 +341,14 @@ def build_username_db_map():
             db_mtimes[rel_key] = 0
 
     mapping = {}  # username → [db_keys], 最新的在前
-    decrypted_msg_dir = os.path.join(_cfg["decrypted_dir"], "message")
     for i in range(5):
-        db_path = os.path.join(decrypted_msg_dir, f"message_{i}.db")
-        if not os.path.exists(db_path):
-            continue
         rel_key = os.path.join("message", f"message_{i}.db")
+        if not get_key_info(db_cache.keys, rel_key):
+            continue
         try:
+            db_path = db_cache.get(rel_key)
+            if not db_path or not os.path.exists(db_path):
+                continue
             conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
             for row in conn.execute("SELECT user_name FROM Name2Id").fetchall():
                 if row[0] not in mapping:
@@ -435,10 +454,13 @@ def decrypt_wal_full(wal_path, out_path, enc_key):
     return patched, ms
 
 
-def load_contact_names():
+def load_contact_names(db_cache=None):
     names = {}
     try:
-        conn = sqlite3.connect(CONTACT_CACHE)
+        db_path = CONTACT_CACHE
+        if db_cache:
+            db_path = db_cache.get(os.path.join("contact", "contact.db")) or db_path
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         for r in conn.execute("SELECT username, nick_name, remark FROM contact").fetchall():
             names[r[0]] = r[2] if r[2] else r[1] if r[1] else r[0]
         conn.close()
@@ -467,6 +489,46 @@ def _strip_group_sender_prefix(text):
     if text and ':\n' in text:
         return text.split(':\n', 1)[1]
     return text
+
+
+def _split_group_sender_prefix(text):
+    if text and ':\n' in text:
+        sender_id, body = text.split(':\n', 1)
+        return sender_id.strip(), body
+    return '', text
+
+
+def _infer_session_title(username, session_title, summary):
+    """从 session_title 或系统摘要中尽量推断会话显示名。"""
+    if session_title:
+        return session_title.strip()
+
+    if not summary:
+        return ''
+
+    if isinstance(summary, bytes):
+        try:
+            summary = summary.decode('utf-8', errors='replace')
+        except Exception:
+            return ''
+
+    text = str(summary).strip()
+    if not text:
+        return ''
+
+    quoted_patterns = [
+        r'^"([^"\n]{1,80})"\s*撤回了一条消息',
+        r'^“([^”\n]{1,80})”\s*撤回了一条消息',
+        r'^([^"\n]{1,80})\s*邀请你加入了群聊',
+    ]
+    for pattern in quoted_patterns:
+        match = re.search(pattern, text)
+        if match:
+            candidate = match.group(1).strip()
+            if candidate and candidate != username:
+                return candidate
+
+    return ''
 
 
 def broadcast_sse(msg_data):
@@ -890,13 +952,24 @@ class SessionMonitor:
         global messages_log
         for ts, base, mc in hidden_msgs:
             self._shown_keys.add((username, ts, base))
+            actual_sender = sender
+            actual_sender_id = ''
+            content_text = mc
+            if is_group and base == 1:
+                sender_id, content_text = _split_group_sender_prefix(mc)
+                if sender_id:
+                    actual_sender_id = sender_id
+                    actual_sender = self.contact_names.get(sender_id, sender_id)
             msg_data = {
                 'time': datetime.fromtimestamp(ts).strftime('%H:%M:%S'),
                 'timestamp': ts,
                 'chat': display,
+                'chat_title': display,
+                'chat_id': username,
                 'username': username,
                 'is_group': is_group,
-                'sender': sender,
+                'sender': actual_sender,
+                'sender_id': actual_sender_id,
             }
             if base == 3:
                 # 隐藏的图片消息
@@ -914,9 +987,9 @@ class SessionMonitor:
                 # 隐藏的文字消息
                 msg_data.update({
                     'type': '文本', 'type_icon': '\U0001f4ac',
-                    'content': mc,
+                    'content': content_text,
                 })
-                print(f"  [hidden] 补充文字: {mc[:30]} t={ts}", flush=True)
+                print(f"  [hidden] 补充文字: {content_text[:30]} t={ts}", flush=True)
             elif base == 47:
                 # 隐藏的表情消息
                 rich = self.resolve_rich_content(username, ts, 47)
@@ -932,7 +1005,7 @@ class SessionMonitor:
                 rich = self.resolve_rich_content(username, ts, 49)
                 msg_data.update({
                     'type': format_msg_type(base), 'type_icon': msg_type_icon(base),
-                    'content': mc[:100] if mc else '',
+                    'content': mc or '',
                 })
                 if rich:
                     msg_data['rich_content'] = rich
@@ -941,7 +1014,7 @@ class SessionMonitor:
                 # 其他类型
                 msg_data.update({
                     'type': format_msg_type(base), 'type_icon': msg_type_icon(base),
-                    'content': mc[:100] if mc else f'[{format_msg_type(base)}]',
+                    'content': mc or f'[{format_msg_type(base)}]',
                 })
                 print(f"  [hidden] 补充type={base} t={ts}", flush=True)
 
@@ -950,6 +1023,7 @@ class SessionMonitor:
                 if len(messages_log) > MAX_LOG:
                     messages_log = messages_log[-MAX_LOG:]
             broadcast_sse(msg_data)
+            dispatch_message_to_services(msg_data)
 
     def _query_msg_content(self, username, timestamp, base_type):
         """通用: 从 message_*.db 查找指定类型消息的 XML 内容
@@ -957,9 +1031,17 @@ class SessionMonitor:
         base_type: 基础类型 (47, 49, 43, 34 等)
         微信4.0 的 local_type 是复合编码: (sub_type << 32) | base_type
         """
+        results = self._query_msg_candidates(username, timestamp, base_type, window_seconds=5, limit=1)
+        if not results:
+            return None
+        mc, _ct_flag, full_type, _create_time = results[0]
+        return mc, full_type
+
+    def _query_msg_candidates(self, username, timestamp, base_type, window_seconds=5, limit=10):
+        """从 message_*.db 查询候选消息，按时间接近度优先返回。"""
         db_keys = self.username_db_map.get(username, [])
         if not db_keys:
-            return None
+            return []
 
         tbl = f"Msg_{hashlib.md5(username.encode()).hexdigest()}"
         for dk in db_keys:
@@ -969,34 +1051,42 @@ class SessionMonitor:
                     break
                 try:
                     conn = sqlite3.connect(f"file:{dec_path}?mode=ro", uri=True)
-                    row = conn.execute(f'''
-                        SELECT message_content, WCDB_CT_message_content, local_type
+                    rows = conn.execute(f'''
+                        SELECT message_content, WCDB_CT_message_content, local_type, create_time
                         FROM "{tbl}"
                         WHERE (local_type = ? OR (local_type > 4294967296 AND local_type % 4294967296 = ?))
                         AND create_time BETWEEN ? AND ?
-                        ORDER BY create_time DESC LIMIT 1
-                    ''', (base_type, base_type, timestamp - 5, timestamp + 5)).fetchone()
+                        ORDER BY ABS(create_time - ?), create_time DESC
+                        LIMIT ?
+                    ''', (
+                        base_type, base_type,
+                        timestamp - window_seconds, timestamp + window_seconds,
+                        timestamp, limit,
+                    )).fetchall()
                     conn.close()
 
-                    if not row:
+                    if not rows:
                         break  # 表存在但没找到匹配行，换下一个 DB
-                    mc, ct_flag, full_type = row
-                    if isinstance(mc, bytes) and ct_flag == 4:
-                        mc = _zstd_dctx.decompress(mc).decode('utf-8', errors='replace')
-                    elif isinstance(mc, bytes):
-                        mc = mc.decode('utf-8', errors='replace')
-                    if not mc:
-                        break
+                    parsed = []
+                    for mc, ct_flag, full_type, create_time in rows:
+                        if isinstance(mc, bytes) and ct_flag == 4:
+                            mc = _zstd_dctx.decompress(mc).decode('utf-8', errors='replace')
+                        elif isinstance(mc, bytes):
+                            mc = mc.decode('utf-8', errors='replace')
+                        if not mc:
+                            continue
 
-                    xml_start = mc.find('<msg>')
-                    if xml_start < 0:
-                        xml_start = mc.find('<msg\n')
-                    if xml_start < 0:
-                        xml_start = mc.find('<?xml')
-                    if xml_start > 0:
-                        mc = mc[xml_start:]
+                        xml_start = mc.find('<msg>')
+                        if xml_start < 0:
+                            xml_start = mc.find('<msg\n')
+                        if xml_start < 0:
+                            xml_start = mc.find('<?xml')
+                        if xml_start > 0:
+                            mc = mc[xml_start:]
+                        parsed.append((mc, ct_flag, full_type, create_time))
 
-                    return mc, full_type
+                    if parsed:
+                        return parsed
 
                 except Exception as e:
                     if 'malformed' in str(e) and _try == 0:
@@ -1006,7 +1096,7 @@ class SessionMonitor:
                     if 'no such table' not in str(e):
                         print(f"  [rich] 查询 {dk} 失败: {e}", flush=True)
                     break
-        return None
+        return []
 
     def _parse_rich_content(self, username, timestamp, msg_type):
         """解析富媒体消息, 返回 dict 或 None"""
@@ -1075,7 +1165,7 @@ class SessionMonitor:
                     ref_name = ref.findtext('displayname') if ref is not None else ''
                     ref_content = ref.findtext('content') if ref is not None else ''
                     if ref_content:
-                        ref_content = ref_content.strip()[:100]
+                        ref_content = ref_content.strip()
                     return {
                         'type': 'quote',
                         'title': title,
@@ -1229,15 +1319,41 @@ class SessionMonitor:
     def _resolve_full_text(self, username, timestamp, is_group, fallback_text):
         """Fetch full text from message DB before rendering."""
         try:
-            result = self._query_msg_content(username, timestamp, 1)
-            if not result:
+            candidates = self._query_msg_candidates(
+                username, timestamp, 1, window_seconds=30, limit=20
+            )
+            if not candidates:
                 return fallback_text
-            full_text, _ = result
-            full_text = _strip_group_sender_prefix(full_text) if is_group else full_text
-            if not full_text:
+
+            def normalize_text(text):
+                text = _strip_group_sender_prefix(text) if is_group else text
+                return re.sub(r'\s+', '', text or '')
+
+            fallback_norm = normalize_text(fallback_text)
+            best_text = None
+            best_score = None
+
+            for full_text, _ct_flag, _full_type, create_time in candidates:
+                full_text = _strip_group_sender_prefix(full_text) if is_group else full_text
+                if not full_text:
+                    continue
+
+                candidate_norm = re.sub(r'\s+', '', full_text)
+                score = (
+                    0 if create_time == timestamp else abs(create_time - timestamp),
+                    0 if fallback_norm and (fallback_norm in candidate_norm or candidate_norm in fallback_norm) else 1,
+                    0 if '\n' in full_text else 1,
+                    -len(full_text),
+                )
+                if best_score is None or score < best_score:
+                    best_score = score
+                    best_text = full_text
+
+            if not best_text:
                 return fallback_text
-            print(f"  [text] full text ready len={len(full_text)}", flush=True)
-            return full_text
+
+            print(f"  [text] full text ready len={len(best_text)}", flush=True)
+            return best_text
         except Exception as e:
             print(f"  [text] full text query failed: {e}", flush=True)
             return fallback_text
@@ -1247,13 +1363,18 @@ class SessionMonitor:
         conn = sqlite3.connect(f"file:{DECRYPTED_SESSION}?mode=ro", uri=True)
         state = {}
         for r in conn.execute("""
-            SELECT username, unread_count, summary, last_timestamp,
-                   last_msg_type, last_msg_sender, last_sender_display_name
-            FROM SessionTable WHERE last_timestamp > 0
+            SELECT s.username, s.unread_count, s.summary, s.last_timestamp,
+                   s.last_msg_type, s.last_msg_sender, s.last_sender_display_name,
+                   COALESCE(n.session_title, '')
+            FROM SessionTable s
+            LEFT JOIN SessionNoContactInfoTable n ON n.username = s.username
+            WHERE s.last_timestamp > 0
         """).fetchall():
+            inferred_title = _infer_session_title(r[0], r[7], r[2])
             state[r[0]] = {
                 'unread': r[1], 'summary': r[2] or '', 'timestamp': r[3],
                 'msg_type': r[4], 'sender': r[5] or '', 'sender_name': r[6] or '',
+                'session_title': inferred_title,
             }
         conn.close()
         return state
@@ -1295,16 +1416,23 @@ class SessionMonitor:
             is_new = prev and (curr['timestamp'] > prev['timestamp'] or
                                (curr['timestamp'] == prev['timestamp'] and curr['msg_type'] != prev.get('msg_type')))
             if is_new:
-                display = self.contact_names.get(username, username)
+                chat_title = (
+                    self.contact_names.get(username)
+                    or curr.get('session_title')
+                    or username
+                )
+                display = chat_title
                 is_group = '@chatroom' in username
                 # 新群/新联系人不在缓存中时，重新加载联系人
                 if display == username and username not in self.contact_names:
                     refreshed = load_contact_names()
                     self.contact_names.update(refreshed)
-                    display = self.contact_names.get(username, username)
+                    display = self.contact_names.get(username) or curr.get('session_title') or username
                 sender = ''
+                sender_id = ''
                 if is_group:
-                    sender = self.contact_names.get(curr['sender'], curr['sender_name'] or curr['sender'])
+                    sender_id = curr['sender'] or ''
+                    sender = self.contact_names.get(sender_id, curr['sender_name'] or sender_id)
 
                 summary = curr['summary']
                 if isinstance(summary, bytes):
@@ -1322,9 +1450,12 @@ class SessionMonitor:
                     'time': datetime.fromtimestamp(curr['timestamp']).strftime('%H:%M:%S'),
                     'timestamp': curr['timestamp'],
                     'chat': display,
+                    'chat_title': display,
+                    'chat_id': username,
                     'username': username,
                     'is_group': is_group,
                     'sender': sender,
+                    'sender_id': sender_id,
                     'type': format_msg_type(curr['msg_type']),
                     'type_icon': msg_type_icon(curr['msg_type']),
                     'content': summary,
@@ -1337,14 +1468,16 @@ class SessionMonitor:
                 self._shown_keys.add((username, curr['timestamp'], curr['msg_type']))
 
                 if curr['msg_type'] == 3:
-                    _img_executor.submit(
+                    _safe_submit(
+                        _img_executor,
                         self._async_resolve_image,
                         username, curr['timestamp'], msg_data
                     )
 
                 # 富媒体消息: 后台解析内容
                 if curr['msg_type'] in (47, 49, 43, 34):
-                    _img_executor.submit(
+                    _safe_submit(
+                        _img_executor,
                         self._async_resolve_rich,
                         username, curr['timestamp'], curr['msg_type'], msg_data
                     )
@@ -1352,7 +1485,8 @@ class SessionMonitor:
                 # 检查时间窗口内是否有被 session 摘要覆盖的消息
                 # (比如用户发了 图片+文字，session只记录最后一条)
                 prev_ts = prev['timestamp'] if prev else curr['timestamp'] - 5
-                _hidden_executor.submit(
+                _safe_submit(
+                    _hidden_executor,
                     self._check_hidden_messages,
                     username, prev_ts, curr['timestamp'], curr['msg_type'],
                     display, is_group, sender
@@ -1368,6 +1502,7 @@ class SessionMonitor:
                     messages_log = messages_log[-MAX_LOG:]
 
             broadcast_sse(msg)
+            dispatch_message_to_services(msg)
 
             try:
                 now = time.time()
@@ -1411,7 +1546,7 @@ def monitor_thread(enc_key, session_db, contact_names, db_cache=None, username_d
     prev_wal_mtime = os.path.getmtime(wal_path) if os.path.exists(wal_path) else 0
     prev_db_mtime = os.path.getmtime(session_db)
 
-    while True:
+    while not _shutdown_event.is_set():
         time.sleep(poll_interval)
         try:
             # 用mtime检测WAL和DB变化
@@ -1469,11 +1604,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 .msg:hover{background:rgba(255,255,255,.05)}
 .msg.hl{border-left:3px solid #4fc3f7;background:rgba(79,195,247,.05);animation:slideIn .3s cubic-bezier(.22,1,.36,1)}
 @keyframes slideIn{from{opacity:0;transform:translateY(-20px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
-.msg-header{display:flex;align-items:center;gap:8px;margin-bottom:3px}
+.msg-header{display:flex;align-items:flex-start;gap:8px;margin-bottom:3px}
 .msg-time{font-size:11px;color:#555;font-family:"SF Mono",Monaco,monospace;min-width:55px}
-.msg-chat{font-weight:600;color:#4fc3f7;font-size:13px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.msg-chat-wrap{display:flex;flex-direction:column;gap:2px;min-width:0;max-width:320px}
+.msg-chat{font-weight:600;color:#4fc3f7;font-size:13px;word-break:break-all}
+.msg-chat-id{font-size:11px;color:#6b7280;word-break:break-all}
 .msg-chat.grp{color:#ce93d8}
-.msg-sender{font-size:12px;color:#999}
+.msg-sender-wrap{display:flex;flex-direction:column;gap:2px;min-width:0;max-width:220px}
+.msg-sender{font-size:12px;color:#999;word-break:break-all}
+.msg-sender-id{font-size:11px;color:#6b7280;word-break:break-all}
 .msg-r{margin-left:auto;display:flex;gap:6px;align-items:center}
 .msg-type{font-size:10px;padding:2px 5px;border-radius:3px;background:rgba(255,255,255,.06);color:#777}
 .msg-unread{font-size:10px;padding:1px 6px;border-radius:8px;background:rgba(244,67,54,.2);color:#ef9a9a;font-weight:600}
@@ -1545,6 +1684,34 @@ a.msg-link{text-decoration:none;color:inherit}
 .add-rule-btn:hover{background:rgba(79,195,247,.2)}
 /* 通知高亮 */
 .msg.notify-hl{border-left:3px solid #ffd54f;background:rgba(255,213,79,.08);box-shadow:0 0 12px rgba(255,213,79,.1)}
+.tabs{display:flex;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.02)}
+.tab-btn{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);color:#9ca3af;padding:7px 12px;border-radius:999px;font-size:12px;cursor:pointer;transition:all .2s}
+.tab-btn.active{background:rgba(79,195,247,.14);border-color:rgba(79,195,247,.35);color:#d9f2ff}
+.panel{flex:1;overflow-y:auto;padding:12px;display:none}
+.panel.active{display:block}
+.svc-log{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:10px 12px;margin-bottom:8px}
+.svc-log.hl{border-left:3px solid #81c784;background:rgba(129,199,132,.06);animation:slideIn .3s cubic-bezier(.22,1,.36,1)}
+.svc-log.summary{border-left:3px solid #ffcc80;background:rgba(255,204,128,.06)}
+.svc-log.error{border-left:3px solid #ef5350;background:rgba(239,83,80,.07)}
+.svc-head{display:flex;gap:10px;align-items:center;margin-bottom:6px}
+.svc-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.svc-filter{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);color:#cbd5e1;padding:7px 12px;border-radius:999px;font-size:12px;cursor:pointer}
+.svc-filter.active{background:rgba(79,195,247,.14);border-color:rgba(79,195,247,.35);color:#d9f2ff}
+.svc-search{flex:1;min-width:220px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);color:#e5e7eb;padding:8px 12px;border-radius:999px;outline:none}
+.svc-clear{background:rgba(239,83,80,.12);border:1px solid rgba(239,83,80,.28);color:#fecaca;padding:7px 12px;border-radius:999px;font-size:12px;cursor:pointer}
+.svc-time{font-size:11px;color:#6b7280;font-family:"SF Mono",Monaco,monospace}
+.svc-name{font-size:11px;color:#81c784;background:rgba(129,199,132,.12);padding:2px 8px;border-radius:999px}
+.svc-kind{font-size:11px;color:#ffcc80;background:rgba(255,204,128,.12);padding:2px 8px;border-radius:999px}
+.svc-trace-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.svc-trace{font-size:11px;color:#64748b;word-break:break-all}
+.svc-copy{background:rgba(79,195,247,.12);border:1px solid rgba(79,195,247,.22);color:#d9f2ff;padding:3px 8px;border-radius:999px;font-size:11px;cursor:pointer}
+.svc-msg{font-size:13px;line-height:1.5;color:#d1d5db;word-break:break-word}
+.svc-details{margin-top:8px}
+.svc-details summary{cursor:pointer;font-size:12px;color:#93c5fd;list-style:none}
+.svc-details summary::-webkit-details-marker{display:none}
+.svc-data{margin-top:8px;background:rgba(15,23,42,.55);border:1px solid rgba(148,163,184,.12);border-radius:8px;padding:10px;overflow:auto;font-size:12px;line-height:1.45;color:#cbd5e1;white-space:pre-wrap}
+.svc-empty{text-align:center;padding:80px 20px;color:#475569}
+.svc-empty .icon{font-size:42px;margin-bottom:10px}
 </style>
 </head>
 <body>
@@ -1553,6 +1720,10 @@ a.msg-link{text-decoration:none;color:inherit}
 <div class="status ok" id="st">SSE 实时</div>
 <div class="stats"><span id="cnt">0 消息</span><span id="perf"></span></div>
 <button class="settings-btn" onclick="toggleSettings()" title="通知设置">⚙️</button>
+</div>
+<div class="tabs">
+<button class="tab-btn active" id="tabMessages" onclick="switchTab('messages')">消息监听</button>
+<button class="tab-btn" id="tabServices" onclick="switchTab('services')">服务日志</button>
 </div>
 <div class="settings-overlay" id="settingsOverlay" onclick="toggleSettings()"></div>
 <div class="settings-panel" id="settingsPanel">
@@ -1571,14 +1742,47 @@ a.msg-link{text-decoration:none;color:inherit}
 </div>
 </div>
 <div id="lightbox" onclick="this.classList.remove('show')"><img id="lb-img" /></div>
+<div class="panel active" id="panelMessages">
 <div class="messages" id="msgs">
 <div class="empty" id="empty"><div class="icon">📡</div><p>等待新消息...</p><p style="margin-top:6px;font-size:11px;color:#333">WAL增量解密 · SSE推送</p></div>
 </div>
+</div>
+<div class="panel" id="panelServices">
+<div class="svc-toolbar">
+<button class="svc-filter active" id="svcFilterAll" onclick="setServiceFilter('all')">全部</button>
+<button class="svc-filter" id="svcFilterError" onclick="setServiceFilter('error')">只看错误</button>
+<button class="svc-filter" id="svcFilterSummary" onclick="setServiceFilter('summary')">只看汇总</button>
+<input class="svc-search" id="svcSearch" type="text" placeholder="搜索链路ID、关键字、AI返回字段..." oninput="applyServiceFilters()">
+<button class="svc-clear" onclick="clearServiceLogsView()">清空当前视图</button>
+</div>
+<div class="messages" id="svcLogs">
+<div class="svc-empty" id="svcEmpty"><div class="icon">🧭</div><p>等待服务日志...</p><p style="margin-top:6px;font-size:11px;color:#475569">AI 提取、去重、入库和分钟汇总都会显示在这里</p></div>
+</div>
+</div>
 <script>
 let n=0;
-const M=document.getElementById('msgs'), S=document.getElementById('st');
+const M=document.getElementById('msgs'), L=document.getElementById('svcLogs'), S=document.getElementById('st');
 const seen = new Set();  // 去重: timestamp+username
+const serviceSeen = new Set();
+let serviceLogs = [];
+let serviceFilter = 'all';
 let sseReady = false;
+
+function switchTab(tab){
+  const isMessages = tab==='messages';
+  document.getElementById('panelMessages').classList.toggle('active', isMessages);
+  document.getElementById('panelServices').classList.toggle('active', !isMessages);
+  document.getElementById('tabMessages').classList.toggle('active', isMessages);
+  document.getElementById('tabServices').classList.toggle('active', !isMessages);
+}
+
+function setServiceFilter(filter){
+  serviceFilter = filter;
+  document.getElementById('svcFilterAll').classList.toggle('active', filter==='all');
+  document.getElementById('svcFilterError').classList.toggle('active', filter==='error');
+  document.getElementById('svcFilterSummary').classList.toggle('active', filter==='summary');
+  applyServiceFilters();
+}
 
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
 const WX_EMOJI={'微笑':'😊','撇嘴':'😣','色':'😍','发呆':'😳','得意':'😎','流泪':'😢','害羞':'😳','闭嘴':'🤐','睡':'😴','大哭':'😭','尴尬':'😅','发怒':'😡','调皮':'😜','呲牙':'😁','惊讶':'😮','难过':'😞','酷':'😎','冷汗':'😰','抓狂':'😫','吐':'🤮','偷笑':'🤭','可爱':'🥰','白眼':'🙄','傲慢':'😤','饥饿':'🤤','困':'😪','惊恐':'😨','流汗':'😓','憨笑':'😄','大兵':'🫡','奋斗':'💪','咒骂':'🤬','疑问':'❓','嘘':'🤫','晕':'😵','折磨':'😩','衰':'😥','骷髅':'💀','敲打':'🔨','再见':'👋','擦汗':'😓','抠鼻':'🤏','鼓掌':'👏','糗大了':'😳','坏笑':'😏','左哼哼':'😤','右哼哼':'😤','哈欠':'🥱','鄙视':'😒','委屈':'🥺','快哭了':'🥺','阴险':'😈','亲亲':'😘','吓':'😱','可怜':'🥺','菜刀':'🔪','西瓜':'🍉','啤酒':'🍺','篮球':'🏀','乒乓':'🏓','咖啡':'☕','饭':'🍚','猪头':'🐷','玫瑰':'🌹','凋谢':'🥀','示爱':'💗','爱心':'❤️','心碎':'💔','蛋糕':'🎂','闪电':'⚡','炸弹':'💣','刀':'🔪','足球':'⚽','瓢虫':'🐞','便便':'💩','月亮':'🌙','太阳':'☀️','礼物':'🎁','拥抱':'🤗','强':'👍','弱':'👎','握手':'🤝','胜利':'✌️','抱拳':'🙏','勾引':'👆','拳头':'✊','差劲':'👎','爱你':'🤟','NO':'🙅','OK':'👌','爱情':'💑','飞吻':'😘','跳跳':'💃','发抖':'🥶','怄火':'😤','转圈':'💫','磕头':'🙇','回头':'🔙','跳绳':'🏃','挥手':'👋','激动':'🤩','街舞':'💃','献吻':'😘','左太极':'☯️','右太极':'☯️','嘿哈':'😆','捂脸':'🤦','奸笑':'😏','机智':'🤓','皱眉':'😟','耶':'✌️','红包':'🧧','鸡':'🐔','Emm':'🤔','加油':'💪','汗':'😓','天啊':'😱','社会社会':'🤙','旺柴':'🐕','好的':'👌','打脸':'🤦','哇':'😲','翻白眼':'🙄','666':'👍','让我看看':'👀','叹气':'😮‍💨','苦涩':'😣','裂开':'💔','嘴唇':'💋','爱心':'❤️','破涕为笑':'😂'};
@@ -1734,14 +1938,20 @@ function addMsg(m, animate){
   const d=document.createElement('div');
   d.className = animate ? 'msg hl' : 'msg';
 
-  const sn=m.sender?`<span class="msg-sender">${esc(m.sender)}</span>`:'';
+  const senderId = m.sender_id || '';
+  const showSenderId = m.is_group && senderId && senderId !== m.sender;
+  const sn=m.sender?`<div class="msg-sender-wrap"><span class="msg-sender">${esc(m.sender)}</span>${showSenderId?`<span class="msg-sender-id">${esc(senderId)}</span>`:''}</div>`:'';
   const ur=m.unread>0?`<span class="msg-unread">${m.unread}</span>`:'';
   const cc=m.is_group?'msg-chat grp':'msg-chat';
+  const chatTitle = m.chat_title || m.chat || m.username || '';
+  const chatId = m.chat_id || m.username || '';
+  const showChatId = chatId && chatId !== chatTitle;
+  const chatMeta = `<div class="msg-chat-wrap"><span class="${cc}">${esc(chatTitle)}</span>${showChatId?`<span class="msg-chat-id">${esc(chatId)}</span>`:''}</div>`;
 
   let contentHtml = renderContent(m);
 
   const dk=m.timestamp+'|'+(m.username||m.chat);
-  d.innerHTML=`<div class="msg-header"><span class="msg-time">${m.time}</span><span class="${cc}">${esc(m.chat)}</span>${sn}<div class="msg-r"><span class="msg-type">${m.type_icon} ${m.type}</span>${ur}</div></div><div class="msg-content" data-key="${dk}">${contentHtml}</div>`;
+  d.innerHTML=`<div class="msg-header"><span class="msg-time">${m.time}</span>${chatMeta}${sn}<div class="msg-r"><span class="msg-type">${m.type_icon} ${m.type}</span>${ur}</div></div><div class="msg-content" data-key="${dk}">${contentHtml}</div>`;
 
   // 通知匹配检查
   if(animate && checkNotifyMatch(m)){
@@ -1759,6 +1969,76 @@ function addMsg(m, animate){
 
   // 限制最多200条
   while(M.children.length>200) M.removeChild(M.lastChild);
+}
+
+function addServiceLog(log, animate){
+  const key = (log.timestamp_ms||'') + '|' + (log.trace_id||'') + '|' + (log.message||'');
+  if(serviceSeen.has(key)) return;
+  serviceSeen.add(key);
+  serviceLogs.unshift({...log, _animate: !!animate});
+  if(serviceLogs.length > 300) serviceLogs = serviceLogs.slice(0, 300);
+  applyServiceFilters();
+}
+
+function clearServiceLogsView(){
+  serviceLogs = [];
+  serviceSeen.clear();
+  applyServiceFilters();
+}
+
+function copyTraceId(traceId){
+  if(!traceId) return;
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(traceId).catch(()=>{});
+    return;
+  }
+  window.prompt('复制链路ID', traceId);
+}
+
+function renderServiceLog(log){
+  const d=document.createElement('div');
+  const isError = log.kind==='error';
+  d.className = 'svc-log' + (log._animate ? ' hl' : '') + (log.kind==='summary' ? ' summary' : '') + (isError ? ' error' : '');
+  const kind = log.kind==='summary'
+    ? '<span class="svc-kind">汇总</span>'
+    : '<span class="svc-name">'+esc(log.service||'service')+'</span>';
+  const trace = log.trace_id
+    ? `<div class="svc-trace-row"><div class="svc-trace">链路ID: ${esc(log.trace_id)}</div><button class="svc-copy" onclick="copyTraceId('${esc(log.trace_id)}')">复制</button></div>`
+    : '';
+  const dataBlock = log.data!=null
+    ? `<details class="svc-details"><summary>查看数据</summary><pre class="svc-data">${esc(JSON.stringify(log.data, null, 2))}</pre></details>`
+    : '';
+  d.innerHTML = `<div class="svc-head"><span class="svc-time">${esc(log.time||'')}</span>${kind}</div>${trace}<div class="svc-msg">${esc(log.message||'')}</div>${dataBlock}`;
+  if(log._animate){
+    setTimeout(()=>d.classList.remove('hl'), 3000);
+  }
+  return d;
+}
+
+function applyServiceFilters(){
+  L.innerHTML = '';
+  const keyword = (document.getElementById('svcSearch')?.value || '').trim().toLowerCase();
+  const filtered = serviceLogs.filter(log=>{
+    const isError = log.kind==='error';
+    if(serviceFilter==='error' && !isError) return false;
+    if(serviceFilter==='summary' && log.kind!=='summary') return false;
+    if(!keyword) return true;
+    const haystack = [
+      log.trace_id||'',
+      log.service||'',
+      log.message||'',
+      log.kind||'',
+      log.data!=null ? JSON.stringify(log.data) : ''
+    ].join(' ').toLowerCase();
+    return haystack.includes(keyword);
+  });
+
+  if(!filtered.length){
+    L.innerHTML = `<div class="svc-empty" id="svcEmpty"><div class="icon">🧭</div><p>当前筛选下没有日志</p><p style="margin-top:6px;font-size:11px;color:#475569">试试搜索链路ID、汇总、失败、script_name 等关键字</p></div>`;
+    return;
+  }
+
+  filtered.forEach(log=>L.appendChild(renderServiceLog(log)));
 }
 
 // 页面加载时请求通知权限
@@ -1804,6 +2084,9 @@ function connectSSE(){
       }
     }
   });
+  es.addEventListener('service_log', ev=>{
+    addServiceLog(JSON.parse(ev.data), true);
+  });
   es.onerror=()=>{
     S.textContent='重连...';
     S.className='status err';
@@ -1814,9 +2097,14 @@ function connectSSE(){
 }
 
 // 启动: 加载历史(无动画) → 连接SSE(有动画)
-fetch('/api/history').then(r=>r.json()).then(ms=>{
+Promise.all([
+  fetch('/api/history').then(r=>r.json()),
+  fetch('/api/service_logs').then(r=>r.json())
+]).then(([ms, logs])=>{
   ms.sort((a,b)=>a.timestamp-b.timestamp);
-  ms.forEach(m=>addMsg(m, false));  // 历史消息无动画
+  ms.forEach(m=>addMsg(m, false));
+  logs.sort((a,b)=>(a.timestamp_ms||0)-(b.timestamp_ms||0));
+  logs.forEach(log=>addServiceLog(log, false));
   connectSSE();
 });
 </script>
@@ -1842,6 +2130,13 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == '/api/history':
             with messages_lock:
                 data = sorted(messages_log, key=lambda m: m.get('timestamp', 0))
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(json.dumps(data, ensure_ascii=False).encode('utf-8'))
+
+        elif self.path == '/api/service_logs':
+            data = get_service_log_history()
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.end_headers()
@@ -1922,14 +2217,6 @@ def main():
     enc_key = bytes.fromhex(session_key_info["enc_key"])
     session_db = os.path.join(DB_DIR, "session", "session.db")
 
-    print("加载联系人...", flush=True)
-    contact_names = load_contact_names()
-    print(f"已加载 {len(contact_names)} 个联系人", flush=True)
-
-    print("构建 username→DB 映射...", flush=True)
-    username_db_map = build_username_db_map()
-    print(f"已映射 {len(username_db_map)} 个用户名", flush=True)
-
     # 启动时清理可能损坏的缓存
     if os.path.isdir(MONITOR_CACHE_DIR):
         for f in os.listdir(MONITOR_CACHE_DIR):
@@ -1947,6 +2234,14 @@ def main():
                         print(f"[cleanup] 缓存被占用跳过: {f}", flush=True)
 
     db_cache = MonitorDBCache(keys, MONITOR_CACHE_DIR)
+
+    print("加载联系人...", flush=True)
+    contact_names = load_contact_names(db_cache)
+    print(f"已加载 {len(contact_names)} 个联系人", flush=True)
+
+    print("构建 username→DB 映射...", flush=True)
+    username_db_map = build_username_db_map(db_cache)
+    print(f"已映射 {len(username_db_map)} 个用户名", flush=True)
 
     # 后台预热所有 message DB（图片/emoji 解密必需）
     def _warmup():
@@ -1974,6 +2269,15 @@ def main():
     t = threading.Thread(target=monitor_thread, args=(enc_key, session_db, contact_names, db_cache, username_db_map), daemon=True)
     t.start()
 
+    set_service_log_sink(
+        lambda payload: broadcast_sse(
+            {
+                "event": "service_log",
+                **payload,
+            }
+        )
+    )
+
     server = ThreadedServer(('0.0.0.0', PORT), Handler)
     print(f"\n=> http://localhost:{PORT}", flush=True)
     print("Ctrl+C 停止\n", flush=True)
@@ -1986,6 +2290,12 @@ def main():
     try:
         server.serve_forever()
     except KeyboardInterrupt:
+        _shutdown_event.set()
+        set_service_log_sink(None)
+        shutdown_service_manager(wait=False)
+        _img_executor.shutdown(wait=False, cancel_futures=True)
+        _hidden_executor.shutdown(wait=False, cancel_futures=True)
+        server.server_close()
         print("\n已停止")
 
 

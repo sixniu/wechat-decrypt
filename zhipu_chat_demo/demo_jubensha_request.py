@@ -14,7 +14,7 @@ from zhipu_chat_demo.config.providers import PROVIDER_QWEN
 
 def main() -> None:
     """执行一次剧本杀提取示例并打印结果。"""
-    text = "7.23玩聚如故=顾飞雪，原价上车"
+    text = "顾飞雪 7.23玩聚如故=原价上车，微信 gf123456"
     result = extract_jubensha(text, provider=PROVIDER_QWEN)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
