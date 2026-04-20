@@ -469,6 +469,40 @@ def load_contact_names(db_cache=None):
     return names
 
 
+def load_contact_aliases(db_cache=None):
+    aliases = {}
+    try:
+        db_path = CONTACT_CACHE
+        if db_cache:
+            db_path = db_cache.get(os.path.join("contact", "contact.db")) or db_path
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        for username, alias in conn.execute("SELECT username, alias FROM contact").fetchall():
+            if alias:
+                aliases[username] = alias
+        conn.close()
+    except:
+        pass
+    return aliases
+
+
+def load_contact_alias(username, db_cache=None):
+    if not username:
+        return ''
+    try:
+        db_path = CONTACT_CACHE
+        if db_cache:
+            db_path = db_cache.get(os.path.join("contact", "contact.db")) or db_path
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        row = conn.execute(
+            "SELECT alias FROM contact WHERE username=? LIMIT 1",
+            (username,),
+        ).fetchone()
+        conn.close()
+        return row[0] if row and row[0] else ''
+    except:
+        return ''
+
+
 def format_msg_type(t):
     return {
         1: '文本', 3: '图片', 34: '语音', 42: '名片',
@@ -599,11 +633,12 @@ def _convert_hevc_to_jpeg(hevc_path, jpeg_path):
 # ============ 监听器 ============
 
 class SessionMonitor:
-    def __init__(self, enc_key, session_db, contact_names, db_cache=None, username_db_map=None):
+    def __init__(self, enc_key, session_db, contact_names, contact_aliases=None, db_cache=None, username_db_map=None):
         self.enc_key = enc_key
         self.session_db = session_db
         self.wal_path = session_db + "-wal"
         self.contact_names = contact_names
+        self.contact_aliases = contact_aliases or {}
         self.db_cache = db_cache
         self.username_db_map = username_db_map or {}
         self.prev_state = {}
@@ -611,6 +646,17 @@ class SessionMonitor:
         self.patched_pages = 0
         # 已显示消息去重: {(username, timestamp, base_msg_type), ...}
         self._shown_keys = set()
+
+    def _resolve_contact_alias(self, username):
+        if not username:
+            return ''
+        alias = self.contact_aliases.get(username, '')
+        if alias:
+            return alias
+        alias = load_contact_alias(username, self.db_cache)
+        if alias:
+            self.contact_aliases[username] = alias
+        return alias
 
     def resolve_image(self, username, timestamp):
         """解密图片: username+timestamp → 解密后的图片文件名，失败返回 None"""
@@ -970,6 +1016,7 @@ class SessionMonitor:
                 'is_group': is_group,
                 'sender': actual_sender,
                 'sender_id': actual_sender_id,
+                'wechat_no': self._resolve_contact_alias(actual_sender_id),
             }
             if base == 3:
                 # 隐藏的图片消息
@@ -1425,8 +1472,9 @@ class SessionMonitor:
                 is_group = '@chatroom' in username
                 # 新群/新联系人不在缓存中时，重新加载联系人
                 if display == username and username not in self.contact_names:
-                    refreshed = load_contact_names()
+                    refreshed = load_contact_names(self.db_cache)
                     self.contact_names.update(refreshed)
+                    self.contact_aliases.update(load_contact_aliases(self.db_cache))
                     display = self.contact_names.get(username) or curr.get('session_title') or username
                 sender = ''
                 sender_id = ''
@@ -1456,6 +1504,7 @@ class SessionMonitor:
                     'is_group': is_group,
                     'sender': sender,
                     'sender_id': sender_id,
+                    'wechat_no': self._resolve_contact_alias(sender_id),
                     'type': format_msg_type(curr['msg_type']),
                     'type_icon': msg_type_icon(curr['msg_type']),
                     'content': summary,
@@ -1523,8 +1572,8 @@ class SessionMonitor:
         cutoff = int(time.time()) - 300
         self._shown_keys = {k for k in self._shown_keys if k[1] > cutoff}
 
-def monitor_thread(enc_key, session_db, contact_names, db_cache=None, username_db_map=None):
-    mon = SessionMonitor(enc_key, session_db, contact_names, db_cache, username_db_map)
+def monitor_thread(enc_key, session_db, contact_names, contact_aliases=None, db_cache=None, username_db_map=None):
+    mon = SessionMonitor(enc_key, session_db, contact_names, contact_aliases, db_cache, username_db_map)
     wal_path = mon.wal_path
 
     # 初始全量解密
@@ -1610,9 +1659,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 .msg-chat{font-weight:600;color:#4fc3f7;font-size:13px;word-break:break-all}
 .msg-chat-id{font-size:11px;color:#6b7280;word-break:break-all}
 .msg-chat.grp{color:#ce93d8}
-.msg-sender-wrap{display:flex;flex-direction:column;gap:2px;min-width:0;max-width:220px}
+.msg-sender-wrap{display:flex;flex-direction:column;gap:2px;min-width:0;max-width:280px}
 .msg-sender{font-size:12px;color:#999;word-break:break-all}
+.msg-sender-meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .msg-sender-id{font-size:11px;color:#6b7280;word-break:break-all}
+.msg-wechat-no{font-size:11px;color:#8b949e;word-break:break-all}
 .msg-r{margin-left:auto;display:flex;gap:6px;align-items:center}
 .msg-type{font-size:10px;padding:2px 5px;border-radius:3px;background:rgba(255,255,255,.06);color:#777}
 .msg-unread{font-size:10px;padding:1px 6px;border-radius:8px;background:rgba(244,67,54,.2);color:#ef9a9a;font-weight:600}
@@ -1940,7 +1991,9 @@ function addMsg(m, animate){
 
   const senderId = m.sender_id || '';
   const showSenderId = m.is_group && senderId && senderId !== m.sender;
-  const sn=m.sender?`<div class="msg-sender-wrap"><span class="msg-sender">${esc(m.sender)}</span>${showSenderId?`<span class="msg-sender-id">${esc(senderId)}</span>`:''}</div>`:'';
+  const wechatNo = m.wechat_no || '不是好友';
+  const senderMeta = showSenderId || wechatNo ? `<div class="msg-sender-meta">${showSenderId?`<span class="msg-sender-id">${esc(senderId)}</span>`:''}<span class="msg-wechat-no">微信号: ${esc(wechatNo)}</span></div>` : '';
+  const sn=m.sender?`<div class="msg-sender-wrap"><span class="msg-sender">${esc(m.sender)}</span>${senderMeta}</div>`:'';
   const ur=m.unread>0?`<span class="msg-unread">${m.unread}</span>`:'';
   const cc=m.is_group?'msg-chat grp':'msg-chat';
   const chatTitle = m.chat_title || m.chat || m.username || '';
@@ -2238,6 +2291,8 @@ def main():
     print("加载联系人...", flush=True)
     contact_names = load_contact_names(db_cache)
     print(f"已加载 {len(contact_names)} 个联系人", flush=True)
+    contact_aliases = load_contact_aliases(db_cache)
+    print(f"已加载 {len(contact_aliases)} 个微信号", flush=True)
 
     print("构建 username→DB 映射...", flush=True)
     username_db_map = build_username_db_map(db_cache)
@@ -2266,7 +2321,7 @@ def main():
         print(f"[warmup] 全部完成 {(time.perf_counter()-t0)*1000:.0f}ms", flush=True)
     threading.Thread(target=_warmup, daemon=True).start()
 
-    t = threading.Thread(target=monitor_thread, args=(enc_key, session_db, contact_names, db_cache, username_db_map), daemon=True)
+    t = threading.Thread(target=monitor_thread, args=(enc_key, session_db, contact_names, contact_aliases, db_cache, username_db_map), daemon=True)
     t.start()
 
     set_service_log_sink(

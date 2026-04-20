@@ -35,6 +35,7 @@ class ZhipuAiLayerTests(unittest.TestCase):
         self.assertIn("剧本杀信息提取助手", messages[0]["content"])
         self.assertIn("当前年份 2026", messages[0]["content"])
         self.assertIn(", ".join(COMMON_STORE_NAMES), messages[0]["content"])
+        self.assertIn("不要提取或输出 user_name、user_id、wechat_no", messages[0]["content"])
         self.assertEqual(messages[1], {"role": "user", "content": "7.21流氓=120上车"})
 
     def test_request_by_type_rejects_unknown_type(self):
@@ -126,14 +127,11 @@ class JubenshaLayerTests(unittest.TestCase):
         raw_text = json.dumps(
             [
                 {
-                    "user_name": "",
-                    "user_id": "",
                     "booking_time": "2026-07-23 14:00",
                     "script_name": "如故",
                     "store_name": "玩聚",
                     "script_details": "原价上车",
                     "discount_type": "normal",
-                    "wechat_no": "",
                 }
             ],
             ensure_ascii=False,
@@ -152,14 +150,11 @@ class JubenshaLayerTests(unittest.TestCase):
         raw_text = json.dumps(
             [
                 {
-                    "user_name": "",
-                    "user_id": "",
                     "booking_time": "2026-07-23 14:00",
                     "script_name": "如故",
                     "store_name": "玩聚",
                     "script_details": "原价上车",
                     "discount_type": "normal",
-                    "wechat_no": "",
                 }
             ],
             ensure_ascii=False,
@@ -182,42 +177,35 @@ class JubenshaLayerTests(unittest.TestCase):
     def test_validate_jubensha_supports_multiple_entries(self):
         payload = [
             {
-                "user_name": "",
-                "user_id": "",
                 "booking_time": "2026-07-21 14:00",
                 "script_name": "流氓",
                 "store_name": "",
                 "script_details": "120上车",
                 "discount_type": "low_price",
-                "wechat_no": "",
             },
             {
-                "user_name": "",
-                "user_id": "",
                 "booking_time": "2026-07-23 14:00",
                 "script_name": "如故",
                 "store_name": "玩聚",
                 "script_details": "原价上车",
                 "discount_type": "normal",
-                "wechat_no": "",
             },
         ]
 
         self.assertEqual(jubensha.validate_jubensha_items(payload), payload)
         self.assertIn("normal", JUBENSHA_DISCOUNT_TYPES)
-        self.assertEqual(JUBENSHA_RESULT_KEYS[0], "user_name")
+        self.assertNotIn("user_name", JUBENSHA_RESULT_KEYS)
+        self.assertNotIn("user_id", JUBENSHA_RESULT_KEYS)
+        self.assertNotIn("wechat_no", JUBENSHA_RESULT_KEYS)
 
     def test_validate_jubensha_rejects_invalid_discount_values(self):
         payload = [
             {
-                "user_name": "",
-                "user_id": "",
                 "booking_time": "2026-07-21 14:00",
                 "script_name": "流氓",
                 "store_name": "",
                 "script_details": "7折上车",
                 "discount_type": "折扣",
-                "wechat_no": "",
             }
         ]
 
@@ -230,14 +218,11 @@ class JubenshaLayerTests(unittest.TestCase):
     def test_validate_jubensha_rejects_invalid_datetime(self):
         payload = [
             {
-                "user_name": "",
-                "user_id": "",
                 "booking_time": "2026/07/21",
                 "script_name": "流氓",
                 "store_name": "",
                 "script_details": "120上车",
                 "discount_type": "low_price",
-                "wechat_no": "",
             }
         ]
 

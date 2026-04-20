@@ -9,12 +9,9 @@ JUBENSHA_DISCOUNT_TYPES = {"low_price", "discount", "free", "normal"}
 
 # 每条剧本杀结构化结果必须包含的字段。
 JUBENSHA_RESULT_KEYS = (
-    "user_name",
-    "user_id",
     "booking_time",
     "script_name",
     "store_name",
     "script_details",
     "discount_type",
-    "wechat_no",
 )

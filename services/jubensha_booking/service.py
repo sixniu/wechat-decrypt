@@ -11,7 +11,7 @@ from zhipu_chat_demo import PROVIDER_ZHIPU, JubenshaExtractionError, extract_jub
 
 from ..base import MessagePayload, MessageService
 from ..log_stream import emit_service_log
-from .constants import DISCOUNT_LABELS, TRIGGER_KEYWORDS
+from .constants import DISCOUNT_LABELS, MONITORED_CHATROOM_IDS, TRIGGER_KEYWORDS
 from .mysql_client import JubenshaMySQLClient
 
 
@@ -37,36 +37,41 @@ class JubenshaBookingService(MessageService):
 
         if not message.get("is_group"):
             self._record_stat("skip_non_group")
-            self._log(trace_id, "跳过: 非群聊消息")
+            return
+
+        chatroom_id = self._resolve_chatroom_id(message)
+        if chatroom_id not in MONITORED_CHATROOM_IDS:
+            self._record_stat("skip_unmonitored_group")
             return
 
         content = self._extract_content(message)
         if not content:
             self._record_stat("skip_non_text")
-            self._log(trace_id, "跳过: 非文本消息或内容为空")
             return
 
         matched_keywords = [keyword for keyword in TRIGGER_KEYWORDS if keyword in content]
         if not matched_keywords:
             self._record_stat("skip_no_keyword")
-            self._log(trace_id, "跳过: 未命中关键词")
             return
 
         sender_name, sender_wx_id = self._resolve_sender(message)
         if not sender_wx_id:
             self._record_stat("skip_no_sender")
-            self._log(trace_id, "跳过: sender_id 为空")
             return
+        sender_wechat_no = str(message.get("wechat_no") or "").strip()
+        sender_wechat_no_label = sender_wechat_no or "不是好友"
 
         self._record_stat("matched")
         self._log(
             trace_id,
             f"命中处理: sender={sender_name or '-'} sender_id={sender_wx_id} "
+            f"wechat_no={sender_wechat_no_label} "
             f"keywords={matched_keywords} content={content[:80]!r}",
             data={
                 "chat_id": str(message.get("chat_id") or message.get("username") or ""),
                 "sender": sender_name,
                 "sender_id": sender_wx_id,
+                "wechat_no": sender_wechat_no_label,
                 "content": content,
                 "matched_keywords": matched_keywords,
             },
@@ -79,7 +84,6 @@ class JubenshaBookingService(MessageService):
         )
         if not inserted:
             self._record_stat("dedup_raw")
-            self._log(trace_id, "原始消息去重命中: jubensha_all_content 已存在，跳过 AI")
             return
 
         self._record_stat("raw_inserted")
@@ -114,7 +118,12 @@ class JubenshaBookingService(MessageService):
         )
 
         for index, item in enumerate(data, start=1):
-            booking_item = self._normalize_booking_item(item, sender_name, sender_wx_id)
+            booking_item = self._normalize_booking_item(
+                item,
+                sender_name,
+                sender_wx_id,
+                sender_wechat_no,
+            )
             self._mysql_client.upsert_booking(booking_item)
             self._record_stat("booking_upserted")
             self._log(
@@ -142,10 +151,15 @@ class JubenshaBookingService(MessageService):
         return sender_name, sender_wx_id
 
     @staticmethod
+    def _resolve_chatroom_id(message: MessagePayload) -> str:
+        return str(message.get("chat_id") or message.get("username") or "").strip()
+
+    @staticmethod
     def _normalize_booking_item(
         item: dict[str, Any],
         sender_name: str,
         sender_wx_id: str,
+        sender_wechat_no: str = "",
     ) -> dict[str, str]:
         discount_type = str(item.get("discount_type", "normal")).strip().lower()
         return {
@@ -156,7 +170,7 @@ class JubenshaBookingService(MessageService):
             "script_name": str(item.get("script_name") or "").strip(),
             "script_details": str(item.get("script_details") or "").strip(),
             "discount_type": DISCOUNT_LABELS.get(discount_type, "正常"),
-            "wechat_no": str(item.get("wechat_no") or "").strip(),
+            "wechat_no": sender_wechat_no,
         }
 
     @staticmethod
@@ -194,6 +208,7 @@ class JubenshaBookingService(MessageService):
         return {
             "matched": 0,
             "skip_non_group": 0,
+            "skip_unmonitored_group": 0,
             "skip_non_text": 0,
             "skip_no_keyword": 0,
             "skip_no_sender": 0,
@@ -224,6 +239,7 @@ class JubenshaBookingService(MessageService):
         summary_data = {
             "命中处理": self._stats["matched"],
             "跳过非群聊": self._stats["skip_non_group"],
+            "跳过非监控群聊": self._stats["skip_unmonitored_group"],
             "跳过非文本": self._stats["skip_non_text"],
             "跳过无关键词": self._stats["skip_no_keyword"],
             "跳过无发送人": self._stats["skip_no_sender"],
@@ -238,6 +254,7 @@ class JubenshaBookingService(MessageService):
             f"[服务][剧本杀][分钟汇总][{minute_text}] "
             f"命中处理={summary_data['命中处理']} "
             f"跳过非群聊={summary_data['跳过非群聊']} "
+            f"跳过非监控群聊={summary_data['跳过非监控群聊']} "
             f"跳过非文本={summary_data['跳过非文本']} "
             f"跳过无关键词={summary_data['跳过无关键词']} "
             f"跳过无发送人={summary_data['跳过无发送人']} "

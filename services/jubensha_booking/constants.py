@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+MONITORED_CHATROOM_IDS = (
+    "18614995060@chatroom",
+)
+
 TRIGGER_KEYWORDS = (
     "🥤",
     "补贴",

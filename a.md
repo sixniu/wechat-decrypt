@@ -24,7 +24,8 @@
 
 - **调用模块**：使用 `zhipu_chat_demo` 下的 `extract_jubensha` 函数。
 - **输入参数**：原始消息文本 `content`。
-- **预期输出**：结构化 JSON 数据，需包含：`user_name`, `user_id`, `booking_time`, `store_name`, `script_name`, `script_details`, `discount_type`, `wechat_no` 等。
+- **预期输出**：结构化 JSON 数据，只要求 AI 提取 `booking_time`, `store_name`, `script_name`, `script_details`, `discount_type`。
+- `user_name`、`user_id`、`wechat_no` 不由 AI 提取，统一从监听到的微信消息和联系人数据库信息补充。
 
 ---
 
@@ -35,7 +36,9 @@
    `unique_no = md5(f"{booking_time}_{store_name}_{script_name}_{user_id}")`
 2. **入库操作 (Upsert)**：
    - **若 unique_no 已存在**：更新该条记录。
-   - **若 unique_no 不存在**：插入新记录，并将 `is_api` 字段设为 `1`。
+   - **若 unique_no 不存在**：插入新记录，并按当前表默认口径写入 `is_api=0`、`booking_type=group`、`is_completed=0`。
+   - 入库时维护 Laravel 风格时间字段：新增记录写入 `created_at` 与 `updated_at`，更新记录刷新 `updated_at`。
+   - 业务去重只匹配 `deleted_at IS NULL` 的未软删记录。
 
 ---
 
@@ -59,27 +62,35 @@ CREATE TABLE `jubensha_all_content` (
 ### 5.2 剧本杀拼本信息表
 ```sql
 CREATE TABLE `jubensha_booking` (
-  `id` int(11) NOT NULL AUTO_INCREMENT COMMENT '主键ID',
-  `unique_no` varchar(100) NOT NULL DEFAULT '' COMMENT '唯一值',
-  `user_name` varchar(50) NOT NULL DEFAULT '' COMMENT '用户名称',
-  `user_id` varchar(50) NOT NULL DEFAULT '' COMMENT '用户编号',
-  `booking_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '拼本时间',
-  `store_name` varchar(100) NOT NULL DEFAULT '' COMMENT '剧本杀店名',
-  `script_name` varchar(200) NOT NULL DEFAULT '' COMMENT '剧本杀名称',
-  `script_details` text COMMENT '剧本杀详情',
-  `discount_type` varchar(20) NOT NULL DEFAULT '正常' COMMENT '优惠类型：低价、折扣、免单、正常',
-  `expire_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '过期时间，默认1天后过期',
-  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-  `is_api` tinyint(1) NOT NULL DEFAULT '0' COMMENT '接口添加:0=否;1=是',
-  `wechat_no` varchar(100) NOT NULL DEFAULT '' COMMENT '微信号',
-  PRIMARY KEY (`id`) USING BTREE,
-  KEY `idx_user_id` (`user_id`) USING BTREE,
-  KEY `idx_booking_time` (`booking_time`) USING BTREE,
-  KEY `idx_store_name` (`store_name`) USING BTREE,
-  KEY `idx_script_name` (`script_name`) USING BTREE,
-  KEY `idx_unique_no` (`unique_no`) USING BTREE,
-  KEY `idx_discount_type` (`discount_type`),
-  KEY `idx_expire_time` (`expire_time`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='剧本杀拼本信息表';
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `unique_no` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '' COMMENT '唯一值',
+  `user_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '' COMMENT '用户 openid',
+  `user_name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '' COMMENT '用户名称',
+  `booking_time` datetime DEFAULT NULL COMMENT '开本时间',
+  `store_name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '' COMMENT '店名或区域',
+  `script_name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '' COMMENT '剧本名称',
+  `script_details` text COLLATE utf8mb4_unicode_ci COMMENT '详情说明',
+  `discount_type` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '正常' COMMENT '优惠类型：正常、低价、折扣、免单',
+  `expire_time` datetime DEFAULT NULL COMMENT '过期时间',
+  `created_at` timestamp NULL DEFAULT NULL COMMENT '创建时间',
+  `updated_at` timestamp NULL DEFAULT NULL COMMENT '更新时间',
+  `deleted_at` timestamp NULL DEFAULT NULL COMMENT '删除时间',
+  `is_api` tinyint(4) NOT NULL DEFAULT '0' COMMENT '是否可靠/官方来源',
+  `wechat_no` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '' COMMENT '微信号',
+  `booking_type` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'group' COMMENT '信息类型：group组局，seek_group求组',
+  `is_completed` tinyint(4) NOT NULL DEFAULT '0' COMMENT '是否完成：0未完成，1已完成',
+  `province_id` int(11) DEFAULT NULL COMMENT '省份ID',
+  `province_name` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '省份名称',
+  `city_id` int(11) DEFAULT NULL COMMENT '城市ID',
+  `city_name` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '城市名称',
+  `district_id` int(11) DEFAULT NULL COMMENT '区县ID',
+  `district_name` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '区县名称',
+  PRIMARY KEY (`id`),
+  KEY `jubensha_booking_user_id_index` (`user_id`),
+  KEY `jubensha_booking_booking_time_index` (`booking_time`),
+  KEY `jubensha_booking_expire_time_index` (`expire_time`),
+  KEY `jubensha_booking_booking_type_index` (`booking_type`),
+  KEY `jubensha_booking_is_api_index` (`is_api`),
+  KEY `jubensha_booking_unique_no_index` (`unique_no`)
+) ENGINE=InnoDB AUTO_INCREMENT=10 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```

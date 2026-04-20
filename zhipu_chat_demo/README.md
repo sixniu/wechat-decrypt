@@ -64,14 +64,11 @@ python -m zhipu_chat_demo.demo_jubensha_request
   "provider": "qwen",
   "data": [
     {
-      "user_name": "",
-      "user_id": "",
       "booking_time": "2026-07-23 14:00",
       "script_name": "如故",
       "store_name": "玩聚",
       "script_details": "原价上车",
-      "discount_type": "normal",
-      "wechat_no": ""
+      "discount_type": "normal"
     }
   ],
   "raw_text": "[...]"
@@ -92,5 +89,6 @@ python -m zhipu_chat_demo.demo_jubensha_request
 - 剧本杀处理层会严格校验：
   - 返回值必须是合法 JSON
   - 顶层必须是数组
-  - 每条数据必须包含完整字段
+  - 每条数据必须包含 AI 负责提取的 5 个业务字段
   - `discount_type` 只能是 `low_price / discount / free / normal`
+  - `user_name`、`user_id`、`wechat_no` 不由 AI 提取，由监听到的微信数据库信息补充

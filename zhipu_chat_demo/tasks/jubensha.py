@@ -131,16 +131,6 @@ def validate_jubensha_items(payload: Any) -> list[dict[str, str]]:
 
         validated.append(
             {
-                "user_name": _validate_string_field(
-                    item["user_name"],
-                    "user_name",
-                    allow_empty=True,
-                ),
-                "user_id": _validate_string_field(
-                    item["user_id"],
-                    "user_id",
-                    allow_empty=True,
-                ),
                 "booking_time": _validate_datetime_string(
                     item["booking_time"],
                     "booking_time",
@@ -161,11 +151,6 @@ def validate_jubensha_items(payload: Any) -> list[dict[str, str]]:
                     allow_empty=True,
                 ),
                 "discount_type": discount_type,
-                "wechat_no": _validate_string_field(
-                    item["wechat_no"],
-                    "wechat_no",
-                    allow_empty=True,
-                ),
             }
         )
     return validated

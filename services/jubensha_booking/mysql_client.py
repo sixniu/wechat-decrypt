@@ -91,12 +91,18 @@ class JubenshaMySQLClient:
             item["user_id"],
         )
         expire_time = self._build_expire_time(item["booking_time"])
+        now = self._current_timestamp()
+        booking_type = str(item.get("booking_type") or "group").strip() or "group"
 
         conn = self._connect()
         try:
             with conn.cursor() as cursor:
                 cursor.execute(
-                    f"SELECT id FROM `{self._booking_table}` WHERE unique_no=%s LIMIT 1",
+                    f"""
+                    SELECT id FROM `{self._booking_table}`
+                    WHERE unique_no=%s AND deleted_at IS NULL
+                    LIMIT 1
+                    """,
                     (unique_no,),
                 )
                 row = cursor.fetchone()
@@ -110,7 +116,11 @@ class JubenshaMySQLClient:
                     item["script_details"],
                     item["discount_type"],
                     expire_time,
+                    now,
+                    now,
                     item["wechat_no"],
+                    booking_type,
+                    0,
                 )
                 if row:
                     cursor.execute(
@@ -124,7 +134,9 @@ class JubenshaMySQLClient:
                             script_details=%s,
                             discount_type=%s,
                             expire_time=%s,
-                            wechat_no=%s
+                            wechat_no=%s,
+                            booking_type=%s,
+                            updated_at=%s
                         WHERE unique_no=%s
                         """,
                         (
@@ -137,6 +149,8 @@ class JubenshaMySQLClient:
                             item["discount_type"],
                             expire_time,
                             item["wechat_no"],
+                            booking_type,
+                            now,
                             unique_no,
                         ),
                     )
@@ -146,8 +160,9 @@ class JubenshaMySQLClient:
                         INSERT INTO `{self._booking_table}` (
                             unique_no, user_name, user_id, booking_time, store_name,
                             script_name, script_details, discount_type, expire_time,
-                            is_api, wechat_no
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s)
+                            created_at, updated_at, is_api, wechat_no, booking_type,
+                            is_completed
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, %s, %s)
                         """,
                         params,
                     )
@@ -155,9 +170,11 @@ class JubenshaMySQLClient:
             conn.close()
 
     @staticmethod
-    def _build_expire_time(booking_time: str) -> str:
-        try:
-            value = dt.datetime.strptime(booking_time, "%Y-%m-%d %H:%M")
-        except ValueError:
-            value = dt.datetime.now()
+    def _build_expire_time(_booking_time: str) -> str:
+        # 过期时间按收集入库时间计算，不跟开本时间绑定。
+        value = dt.datetime.now()
         return (value + dt.timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+
+    @staticmethod
+    def _current_timestamp() -> str:
+        return dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
