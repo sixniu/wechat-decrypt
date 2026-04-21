@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 MONITORED_CHATROOM_IDS = (
-    "18614995060@chatroom",
+    "18614995060@chatroom", # 境由心造
+    "58262692214@chatroom", # 拼好本
+    "46000926626@chatroom", # 剧本杀31群
+    "47388405090@chatroom", # 剧本杀15群
 )
 
 TRIGGER_KEYWORDS = (

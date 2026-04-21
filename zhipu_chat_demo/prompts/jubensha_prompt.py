@@ -11,7 +11,7 @@ import datetime as dt
 # 对外暴露给调用方和注册表使用的任务类型名。
 TASK_JUBENSHA = "jubensha"
 # 提示词里会用到的常见店名或别名。
-COMMON_STORE_NAMES = ("玩聚", "汽水", "pro", "1t")
+COMMON_STORE_NAMES = ("玩聚", "汽水", "pro", "1t", "请君", "白鹿", "吾生", "山有", "源初", "楚门", "浮生")
 
 
 def build_jubensha_system_prompt(now: dt.datetime) -> str:
