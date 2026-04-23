@@ -60,6 +60,15 @@ DEFAULT_SERVICE_CONFIG: dict[str, Any] = {
             "_trigger_keywords_comment": (
                 "触发剧本杀拼本处理的关键词列表。文本消息包含任意一个关键词就会处理。"
             ),
+            "allowed_time_range": {
+                "start": "09:30",
+                "_start_comment": "剧本杀拼本消息允许处理的开始时间，24 小时制 HH:MM。",
+                "end": "20:00",
+                "_end_comment": "剧本杀拼本消息允许处理的结束时间，24 小时制 HH:MM。",
+            },
+            "_allowed_time_range_comment": (
+                "剧本杀拼本消息每日允许处理的时间范围；只有落在这个时间窗内的消息才会进入提取。"
+            ),
             "raw_table": "jubensha_all_content",
             "_raw_table_comment": "保存原始群聊文本消息的 MySQL 表名。",
             "booking_table": "jubensha_booking",
@@ -68,8 +77,10 @@ DEFAULT_SERVICE_CONFIG: dict[str, Any] = {
                 "_comment": "剧本杀预约海报定时发送配置。JSON 不支持 // 注释，所以这里用 _comment 字段说明含义。",
                 "enabled": False,
                 "_enabled_comment": "是否启用定时发送预约海报。true=启用，false=关闭。",
+                "target_chats": ["境由心造"],
+                "_target_chats_comment": "发送目标群聊名称列表，会依次传给 wx.SendFiles 的 who 参数。",
                 "target_chat": "境由心造",
-                "_target_chat_comment": "发送目标群聊名称，会传给 wx.SendFiles 的 who 参数。",
+                "_target_chat_comment": "旧版单群配置，保留兼容；如果 target_chats 有值，优先使用 target_chats。",
                 "exact": False,
                 "_exact_comment": "搜索群聊时是否精确匹配。true=必须完全等于 target_chat，false=允许模糊匹配。",
                 "times": ["10:01", "14:01", "20:01"],

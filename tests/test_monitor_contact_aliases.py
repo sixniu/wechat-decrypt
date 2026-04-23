@@ -65,7 +65,7 @@ class MonitorBookingPosterSchedulerTests(unittest.TestCase):
                 "jubensha_booking": {
                     "poster_sender": {
                         "enabled": True,
-                        "target_chat": "境由心造",
+                        "target_chats": ["境由心造", "拼好本"],
                         "exact": False,
                         "times": ["10:01", "14:01", "20:01"],
                     }
@@ -82,7 +82,7 @@ class MonitorBookingPosterSchedulerTests(unittest.TestCase):
 
         mocked_start.assert_called_once_with(
             wx=wx,
-            who="境由心造",
+            who_list=["境由心造", "拼好本"],
             schedule_times=["10:01", "14:01", "20:01"],
             exact=False,
         )
@@ -94,7 +94,7 @@ class MonitorBookingPosterSchedulerTests(unittest.TestCase):
                 "jubensha_booking": {
                     "poster_sender": {
                         "enabled": True,
-                        "target_chat": "新群",
+                        "target_chats": ["新群A", "新群B"],
                         "exact": True,
                         "times": ["11:01"],
                     }
@@ -121,7 +121,7 @@ class MonitorBookingPosterSchedulerTests(unittest.TestCase):
         old_scheduler.stop.assert_called_once_with()
         mocked_start.assert_called_once_with(
             wx=wx,
-            who="新群",
+            who_list=["新群A", "新群B"],
             schedule_times=["11:01"],
             exact=True,
         )

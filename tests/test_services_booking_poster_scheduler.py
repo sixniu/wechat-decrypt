@@ -34,11 +34,11 @@ class BookingPosterSchedulerTests(unittest.TestCase):
         now = dt.datetime(2026, 4, 23, 10, 1)
 
         with patch(
-            "services.jubensha_booking.poster_scheduler.send_booking_poster_to_chat"
+            "services.jubensha_booking.poster_scheduler.send_booking_poster_to_chats"
         ) as mocked_send:
             scheduler = start_booking_poster_scheduler(
                 wx=wx,
-                who="境由心造",
+                who_list=["境由心造", "拼好本"],
                 schedule_times=["10:01"],
                 stop_event=stop_event,
                 clock=lambda: now,
@@ -47,7 +47,11 @@ class BookingPosterSchedulerTests(unittest.TestCase):
             )
             scheduler.thread.join(timeout=2)
 
-        mocked_send.assert_called_once_with(who="境由心造", wx=wx, exact=False)
+        mocked_send.assert_called_once_with(
+            who_list=["境由心造", "拼好本"],
+            wx=wx,
+            exact=False,
+        )
 
 
 class _FakeStopEvent:

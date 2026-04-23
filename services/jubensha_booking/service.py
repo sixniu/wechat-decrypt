@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import threading
 import time
+import datetime as dt
 from typing import Any
 
 from zhipu_chat_demo import PROVIDER_ZHIPU, JubenshaExtractionError, extract_jubensha
@@ -26,17 +27,36 @@ class JubenshaBookingService(MessageService):
         mysql_client: JubenshaMySQLClient,
         monitored_chatroom_ids: tuple[str, ...],
         trigger_keywords: tuple[str, ...],
+        allowed_time_range: tuple[str, str],
         provider: str = PROVIDER_ZHIPU,
     ) -> None:
+        """初始化剧本杀拼本消息服务。
+
+        参数:
+        - mysql_client: MySQL 访问客户端，负责原始消息去重和业务数据写入。
+        - monitored_chatroom_ids: 允许进入提取流程的微信群 ID 列表。
+        - trigger_keywords: 触发消息提取的关键词列表。
+        - allowed_time_range: 每日允许处理的时间范围，格式为 `(start, end)`，值为 `HH:MM`。
+        - provider: AI 提取服务提供商名称。
+        """
         self._mysql_client = mysql_client
         self._provider = provider
         self._monitored_chatroom_ids = monitored_chatroom_ids
         self._trigger_keywords = trigger_keywords
+        self._allowed_time_range = self._parse_allowed_time_range(allowed_time_range)
         self._stats_lock = threading.Lock()
         self._stats_bucket_minute = self._current_minute()
         self._stats = self._empty_stats()
 
     def handle_message(self, message: MessagePayload) -> None:
+        """处理一条群聊消息，并在满足条件时提取剧本杀拼本结构化数据。
+
+        参数:
+        - message: 监听层传入的标准化消息对象，包含群 ID、发送人、内容、消息类型等字段。
+
+        关键副作用:
+        - 命中条件时会写入原始消息表、调用 AI、写入业务表、输出服务日志。
+        """
         trace_id = self._build_trace_id(message)
 
         if not message.get("is_group"):
@@ -58,6 +78,9 @@ class JubenshaBookingService(MessageService):
         ]
         if not matched_keywords:
             self._record_stat("skip_no_keyword")
+            return
+        if not self._is_within_allowed_time_range():
+            self._record_stat("skip_outside_allowed_time")
             return
 
         sender_name, sender_wx_id = self._resolve_sender(message)
@@ -145,6 +168,7 @@ class JubenshaBookingService(MessageService):
 
     @staticmethod
     def _extract_content(message: MessagePayload) -> str:
+        """从标准化消息对象中提取文本内容。"""
         if message.get("type") != "文本":
             return ""
         content = message.get("content", "")
@@ -152,12 +176,14 @@ class JubenshaBookingService(MessageService):
 
     @staticmethod
     def _resolve_sender(message: MessagePayload) -> tuple[str, str]:
+        """从消息对象中解析发送人显示名和发送人微信内部 ID。"""
         sender_name = str(message.get("sender") or "").strip()
         sender_wx_id = str(message.get("sender_id") or "").strip()
         return sender_name, sender_wx_id
 
     @staticmethod
     def _resolve_chatroom_id(message: MessagePayload) -> str:
+        """从消息对象中解析群聊 ID。"""
         return str(message.get("chat_id") or message.get("username") or "").strip()
 
     @staticmethod
@@ -167,6 +193,7 @@ class JubenshaBookingService(MessageService):
         sender_wx_id: str,
         sender_wechat_no: str = "",
     ) -> dict[str, str]:
+        """把 AI 返回的结构化字段标准化为数据库写入对象。"""
         discount_type = str(item.get("discount_type", "normal")).strip().lower()
         return {
             "user_name": sender_name,
@@ -181,6 +208,7 @@ class JubenshaBookingService(MessageService):
 
     @staticmethod
     def _build_trace_id(message: MessagePayload) -> str:
+        """根据消息关键字段构造稳定的链路追踪 ID。"""
         chat_id = str(message.get("chat_id") or message.get("username") or "-").strip()
         timestamp = str(message.get("timestamp") or "-").strip()
         sender_id = str(message.get("sender_id") or "-").strip()
@@ -196,6 +224,7 @@ class JubenshaBookingService(MessageService):
         kind: str = "log",
         data: Any = None,
     ) -> None:
+        """输出服务日志并同步推送到服务日志流。"""
         print(f"[services][jubensha][{trace_id}] {message}", flush=True)
         emit_service_log(
             service="jubensha_booking",
@@ -207,16 +236,19 @@ class JubenshaBookingService(MessageService):
 
     @staticmethod
     def _current_minute() -> int:
+        """返回当前时间所属的分钟桶，用于分钟级统计汇总。"""
         return int(time.time() // 60)
 
     @staticmethod
     def _empty_stats() -> dict[str, int]:
+        """创建空的分钟统计计数器。"""
         return {
             "matched": 0,
             "skip_non_group": 0,
             "skip_unmonitored_group": 0,
             "skip_non_text": 0,
             "skip_no_keyword": 0,
+            "skip_outside_allowed_time": 0,
             "skip_no_sender": 0,
             "dedup_raw": 0,
             "raw_inserted": 0,
@@ -227,6 +259,7 @@ class JubenshaBookingService(MessageService):
         }
 
     def _record_stat(self, key: str, value: int = 1) -> None:
+        """记录一项统计计数，并在分钟切换时输出上一分钟汇总。"""
         with self._stats_lock:
             current_minute = self._current_minute()
             if current_minute != self._stats_bucket_minute:
@@ -236,6 +269,10 @@ class JubenshaBookingService(MessageService):
             self._stats[key] += value
 
     def _flush_stats_locked(self) -> None:
+        """输出当前分钟汇总日志。
+
+        调用方要求已经持有 `_stats_lock`，因此这里不再重复加锁。
+        """
         if not any(self._stats.values()):
             return
         minute_text = time.strftime(
@@ -248,6 +285,7 @@ class JubenshaBookingService(MessageService):
             "跳过非监控群聊": self._stats["skip_unmonitored_group"],
             "跳过非文本": self._stats["skip_non_text"],
             "跳过无关键词": self._stats["skip_no_keyword"],
+            "跳过非业务时段": self._stats["skip_outside_allowed_time"],
             "跳过无发送人": self._stats["skip_no_sender"],
             "原始去重命中": self._stats["dedup_raw"],
             "原始新增": self._stats["raw_inserted"],
@@ -263,6 +301,7 @@ class JubenshaBookingService(MessageService):
             f"跳过非监控群聊={summary_data['跳过非监控群聊']} "
             f"跳过非文本={summary_data['跳过非文本']} "
             f"跳过无关键词={summary_data['跳过无关键词']} "
+            f"跳过非业务时段={summary_data['跳过非业务时段']} "
             f"跳过无发送人={summary_data['跳过无发送人']} "
             f"原始去重命中={summary_data['原始去重命中']} "
             f"原始新增={summary_data['原始新增']} "
@@ -279,3 +318,25 @@ class JubenshaBookingService(MessageService):
             kind="summary",
             data=summary_data,
         )
+
+    def _is_within_allowed_time_range(self) -> bool:
+        """判断当前本地时间是否落在允许处理的业务时间范围内。"""
+        now_struct = time.localtime()
+        current_time = dt.time(hour=now_struct.tm_hour, minute=now_struct.tm_min)
+        start_time, end_time = self._allowed_time_range
+        return start_time <= current_time <= end_time
+
+    @staticmethod
+    def _parse_allowed_time_range(allowed_time_range: tuple[str, str]) -> tuple[dt.time, dt.time]:
+        """把 `HH:MM` 时间范围配置解析为 time 对象元组。"""
+        start_raw, end_raw = allowed_time_range
+        return (
+            JubenshaBookingService._parse_hhmm(start_raw),
+            JubenshaBookingService._parse_hhmm(end_raw),
+        )
+
+    @staticmethod
+    def _parse_hhmm(raw: str) -> dt.time:
+        """把单个 `HH:MM` 字符串解析为 `datetime.time`。"""
+        hour_text, minute_text = str(raw).split(":", 1)
+        return dt.time(hour=int(hour_text), minute=int(minute_text))

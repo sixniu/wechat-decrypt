@@ -115,9 +115,10 @@ def start_booking_poster_scheduler_if_enabled(wx, cfg=None):
         return None
 
     stop_booking_poster_scheduler_if_running()
+    target_chats = _normalize_target_chats(poster_cfg)
     BOOKING_POSTER_SCHEDULER = start_booking_poster_scheduler(
         wx=wx,
-        who=poster_cfg.get("target_chat", "境由心造"),
+        who_list=target_chats,
         schedule_times=poster_cfg.get("times", ["10:01", "14:01", "20:01"]),
         exact=bool(poster_cfg.get("exact", False)),
     )
@@ -176,6 +177,21 @@ def _get_config_mtime(config_path):
         return os.path.getmtime(config_path)
     except OSError:
         return None
+
+
+def _normalize_target_chats(poster_cfg):
+    """统一兼容单群配置和多群配置，返回目标群聊名称列表。"""
+    target_chats = poster_cfg.get("target_chats")
+    if isinstance(target_chats, list):
+        targets = [str(item).strip() for item in target_chats if str(item).strip()]
+        if targets:
+            return targets
+
+    target_chat = str(poster_cfg.get("target_chat") or "").strip()
+    if target_chat:
+        return [target_chat]
+
+    return ["境由心造"]
 
 # ---- Emoji 缓存 (md5 → {cdn_url, aes_key, encrypt_url}) ----
 _emoji_lookup = {}       # md5 → dict

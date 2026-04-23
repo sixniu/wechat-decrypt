@@ -51,8 +51,20 @@ class ServiceConfigLoaderTests(unittest.TestCase):
             "境由心造",
         )
         self.assertEqual(
+            cfg["services"]["jubensha_booking"]["poster_sender"]["target_chats"],
+            ["境由心造"],
+        )
+        self.assertEqual(
             cfg["services"]["jubensha_booking"]["poster_sender"]["times"],
             ["10:01", "14:01", "20:01"],
+        )
+        self.assertEqual(
+            cfg["services"]["jubensha_booking"]["allowed_time_range"]["start"],
+            "09:30",
+        )
+        self.assertEqual(
+            cfg["services"]["jubensha_booking"]["allowed_time_range"]["end"],
+            "20:00",
         )
 
 

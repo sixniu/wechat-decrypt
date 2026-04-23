@@ -1,4 +1,5 @@
 import datetime as dt
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -18,6 +19,7 @@ def build_service(mysql_client, **kwargs):
             TEST_MONITORED_CHATROOM_IDS,
         ),
         trigger_keywords=kwargs.get("trigger_keywords", TEST_TRIGGER_KEYWORDS),
+        allowed_time_range=kwargs.get("allowed_time_range", ("09:30", "20:00")),
     )
 
 
@@ -113,6 +115,27 @@ class JubenshaBookingServiceTests(unittest.TestCase):
         )
 
         mysql_client.reserve_raw_message.assert_called_once()
+
+    def test_service_skips_messages_outside_allowed_time_range(self):
+        mysql_client = MagicMock()
+        service = build_service(mysql_client, allowed_time_range=("09:30", "20:00"))
+
+        with patch(
+            "services.jubensha_booking.service.time.localtime",
+            return_value=time.struct_time((2026, 4, 23, 21, 0, 0, 3, 113, -1)),
+        ):
+            service.handle_message(
+                {
+                    "type": "文本",
+                    "content": "今天补贴局，7.23玩聚如故上车",
+                    "is_group": True,
+                    "chat_id": "18614995060@chatroom",
+                    "sender": "顾飞雪",
+                    "sender_id": "wxid_123",
+                }
+            )
+
+        mysql_client.reserve_raw_message.assert_not_called()
 
     def test_service_uses_listener_sender_fields_for_booking_user(self):
         mysql_client = MagicMock()

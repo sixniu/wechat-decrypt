@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 from services.jubensha_booking.poster_sender import (
     BookingPosterError,
     send_booking_poster_to_chat,
+    send_booking_poster_to_chats,
 )
 
 
@@ -69,6 +70,37 @@ class BookingPosterSenderTests(unittest.TestCase):
             send_booking_poster_to_chat(who="测试群")
 
         self.assertIn("wx", str(ctx.exception))
+
+    def test_send_booking_poster_to_chats_downloads_once_and_sends_many_times(self):
+        wx = MagicMock()
+        poster_bytes = b"fake-png"
+        response = {
+            "code": 200,
+            "msg": "ok",
+            "data": {
+                "url": "https://www.shisan.ink/storage/posters/booking/demo.png",
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch("services.jubensha_booking.poster_sender.urlopen") as mocked_urlopen:
+                mocked_urlopen.side_effect = [
+                    _FakeResponse(json.dumps(response).encode("utf-8")),
+                    _FakeResponse(poster_bytes),
+                ]
+
+                saved_path = send_booking_poster_to_chats(
+                    who_list=["群A", "群B"],
+                    wx=wx,
+                    exact=True,
+                    download_dir=temp_dir,
+                    api_url="https://www.shisan.ink/api/booking/poster",
+                )
+
+        self.assertEqual(Path(saved_path).name, "demo.png")
+        self.assertEqual(wx.SendFiles.call_count, 2)
+        wx.SendFiles.assert_any_call(filepath=saved_path, who="群A", exact=True)
+        wx.SendFiles.assert_any_call(filepath=saved_path, who="群B", exact=True)
 
 
 class _FakeResponse:

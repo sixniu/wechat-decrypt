@@ -33,7 +33,7 @@ class MainWebNewTests(unittest.TestCase):
                     with patch.object(app_main, "ensure_keys"):
                         app_main.main()
 
-        fake_wxautox4.WeChat.assert_called_once_with()
+        fake_wxautox4.WeChat.assert_called_once_with("人类群星闪耀时")
         fake_monitor.main.assert_called_once_with(wx=wx_instance)
 
 

@@ -80,6 +80,9 @@ def _build_services() -> list[object]:
                 jubensha_cfg.get("monitored_chatroom_ids", [])
             ),
             trigger_keywords=tuple(jubensha_cfg.get("trigger_keywords", [])),
+            allowed_time_range=_normalize_allowed_time_range(
+                jubensha_cfg.get("allowed_time_range", {})
+            ),
         )
     ]
 
@@ -102,3 +105,20 @@ def _normalize_chatroom_ids(raw_chatrooms: object) -> tuple[str, ...]:
             chatroom_ids.append(chatroom_id)
 
     return tuple(chatroom_ids)
+
+
+def _normalize_allowed_time_range(raw_range: object) -> tuple[str, str]:
+    """规范化允许处理的业务时间范围配置。
+
+    参数:
+    - raw_range: `services.config.json` 中的 `allowed_time_range` 配置对象。
+
+    返回值:
+    - 返回 `(start, end)` 二元组，格式均为 `HH:MM`。
+    """
+    if not isinstance(raw_range, dict):
+        return ("09:30", "20:00")
+
+    start = str(raw_range.get("start") or "09:30").strip()
+    end = str(raw_range.get("end") or "20:00").strip()
+    return (start, end)

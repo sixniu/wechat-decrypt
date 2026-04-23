@@ -7,6 +7,7 @@ from .poster_sender import (
     fetch_booking_poster_url,
     generate_booking_poster,
     send_booking_poster_to_chat,
+    send_booking_poster_to_chats,
     send_poster_to_chat,
 )
 from .poster_scheduler import (
@@ -28,6 +29,7 @@ __all__ = [
     "generate_booking_poster",
     "next_booking_poster_run",
     "send_booking_poster_to_chat",
+    "send_booking_poster_to_chats",
     "send_poster_to_chat",
     "start_booking_poster_scheduler",
 ]

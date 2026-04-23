@@ -28,12 +28,28 @@ poster_path = generate_booking_poster()
 send_poster_to_chat(poster_path, who="群聊名称", wx=wx, exact=False)
 ```
 
+预约海报多群发送示例：
+
+```python
+from wxautox4 import WeChat
+from services.jubensha_booking import send_booking_poster_to_chats
+
+wx = WeChat()
+send_booking_poster_to_chats(
+    who_list=["境由心造", "拼好本"],
+    wx=wx,
+    exact=True,
+)
+```
+
 预约海报定时发送：
 - 配置集中放在 `services/config.json`
 - `services.jubensha_booking.monitored_chatroom_ids`：需要监听的微信群 ID 列表
 - `services.jubensha_booking.trigger_keywords`：触发剧本杀拼本处理的关键词列表
+- `services.jubensha_booking.allowed_time_range`：每日允许处理剧本杀消息的业务时间范围
 - `services.jubensha_booking.poster_sender`：预约海报定时发送配置
 - `enabled`：是否启用定时发送
+- `target_chats`：发送目标群聊名称列表，按顺序逐个发送
 - `target_chat`：发送目标群聊名称
 - `exact`：搜索群聊时是否精确匹配
 - `times`：每天发送时间，24 小时制 `HH:MM`

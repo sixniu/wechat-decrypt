@@ -7,7 +7,7 @@ import threading
 from dataclasses import dataclass
 from typing import Callable, Iterable, Protocol
 
-from .poster_sender import send_booking_poster_to_chat
+from .poster_sender import send_booking_poster_to_chats
 
 
 class BookingPosterScheduleError(RuntimeError):
@@ -34,7 +34,7 @@ class BookingPosterScheduler:
 def start_booking_poster_scheduler(
     *,
     wx,
-    who: str,
+    who_list: list[str] | tuple[str, ...],
     schedule_times: Iterable[str],
     exact: bool = False,
     stop_event: StopEvent | None = None,
@@ -42,12 +42,24 @@ def start_booking_poster_scheduler(
     logger: Callable[[str], None] = print,
     daemon: bool = True,
 ) -> BookingPosterScheduler:
-    """启动后台线程，按指定时间每天发送预约海报。"""
+    """启动后台线程，按指定时间每天发送预约海报到多个群聊。
+
+    参数:
+    - wx: 已初始化的 WeChat 实例。
+    - who_list: 需要发送的目标群聊名称列表。
+    - schedule_times: 每天发送时间列表，格式为 HH:MM。
+    - exact: 搜索群聊时是否精确匹配。
+    - stop_event: 外部可传入的停止事件，便于测试或手动停止。
+    - clock: 当前时间函数，默认使用系统时间。
+    - logger: 日志输出函数。
+    - daemon: 是否以守护线程方式运行。
+    """
     if wx is None:
         raise BookingPosterScheduleError("wx 必须传入已初始化的 WeChat 实例")
 
     times = tuple(schedule_times)
     _parse_schedule_times(times)
+    targets = _normalize_who_list(who_list)
     event = stop_event or threading.Event()
     now = clock or dt.datetime.now
 
@@ -57,13 +69,14 @@ def start_booking_poster_scheduler(
             wait_seconds = max(0.0, (run_at - now()).total_seconds())
             logger(
                 "[services][jubensha][poster] 下次发送时间: "
-                f"{run_at.strftime('%Y-%m-%d %H:%M:%S')}，目标群: {who}"
+                f"{run_at.strftime('%Y-%m-%d %H:%M:%S')}，目标群: {targets}"
             )
             if event.wait(wait_seconds):
                 break
             try:
-                send_booking_poster_to_chat(who=who, wx=wx, exact=exact)
-                logger(f"[services][jubensha][poster] 海报已发送到: {who}")
+                # 到点后请求一次海报，再复用同一张图片依次发给所有目标群聊。
+                send_booking_poster_to_chats(who_list=targets, wx=wx, exact=exact)
+                logger(f"[services][jubensha][poster] 海报已发送到: {targets}")
             except Exception as exc:  # noqa: BLE001
                 logger(f"[services][jubensha][poster] 海报发送失败: {exc}")
 
@@ -93,6 +106,7 @@ def next_booking_poster_run(
 
 
 def _parse_schedule_times(schedule_times: Iterable[str]) -> tuple[dt.time, ...]:
+    """把 HH:MM 字符串列表解析并排序为 time 元组。"""
     parsed: list[dt.time] = []
     for raw in schedule_times:
         try:
@@ -107,3 +121,11 @@ def _parse_schedule_times(schedule_times: Iterable[str]) -> tuple[dt.time, ...]:
         raise BookingPosterScheduleError("发送时间不能为空")
 
     return tuple(sorted(parsed))
+
+
+def _normalize_who_list(who_list: list[str] | tuple[str, ...]) -> list[str]:
+    """规范化目标群聊列表，去掉空值并保持原有顺序。"""
+    targets = [str(item).strip() for item in who_list if str(item).strip()]
+    if not targets:
+        raise BookingPosterScheduleError("发送目标 who_list 不能为空")
+    return targets

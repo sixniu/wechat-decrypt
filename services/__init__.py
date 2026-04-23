@@ -7,6 +7,7 @@ from .jubensha_booking import (
     fetch_booking_poster_url,
     generate_booking_poster,
     send_booking_poster_to_chat,
+    send_booking_poster_to_chats,
     send_poster_to_chat,
 )
 from .log_stream import get_service_log_history, set_service_log_sink
@@ -23,6 +24,7 @@ __all__ = [
     "load_service_config",
     "load_service_config_strict",
     "send_booking_poster_to_chat",
+    "send_booking_poster_to_chats",
     "send_poster_to_chat",
     "set_service_log_sink",
     "shutdown_service_manager",
