@@ -107,8 +107,12 @@ def main():
     elif cmd == "web_new":
         print("[*] 启动全文版 Web UI...")
         print()
+        print("[*] 初始化微信实例...")
+        from wxautox4 import WeChat  # Plus版
+        wx = WeChat("人类群星闪耀时")
+        print("[+] 微信实例已初始化")
         from monitor_web_new import main as start_web
-        start_web()
+        start_web(wx=wx)
     else:
         print(f"[!] 未知命令: {cmd}")
         print()

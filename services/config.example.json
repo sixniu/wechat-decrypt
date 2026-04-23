@@ -1,18 +1,79 @@
 {
+    "_comment": "services 目录专用配置。JSON 不支持 // 注释，所以用 _xxx_comment 字段说明每个配置项。",
     "mysql": {
+        "_comment": "MySQL 数据库连接配置，用于剧本杀拼本消息入库。",
         "host": "127.0.0.1",
+        "_host_comment": "MySQL 主机地址，例如 127.0.0.1 或云数据库 IP。",
         "port": 3306,
+        "_port_comment": "MySQL 端口，默认 3306。",
         "user": "root",
+        "_user_comment": "MySQL 用户名。",
         "password": "your-password",
+        "_password_comment": "MySQL 密码。",
         "database": "your-database",
-        "charset": "utf8mb4"
+        "_database_comment": "MySQL 数据库名。",
+        "charset": "utf8mb4",
+        "_charset_comment": "数据库字符集，建议 utf8mb4，支持中文和 emoji。"
     },
     "services": {
+        "_comment": "各业务服务配置。",
         "jubensha_booking": {
+            "_comment": "剧本杀拼本服务配置，包含消息入库和预约海报定时发送。",
             "enabled": false,
+            "_enabled_comment": "是否启用剧本杀拼本消息处理服务。true=启用，false=关闭。",
             "provider": "zhipu",
+            "_provider_comment": "AI 提取服务提供商，目前默认 zhipu。",
+            "monitored_chatroom_ids": [
+                {
+                    "id": "18614995060@chatroom",
+                    "name": "境由心造"
+                },
+                {
+                    "id": "58262692214@chatroom",
+                    "name": "拼好本"
+                },
+                {
+                    "id": "46000926626@chatroom",
+                    "name": "剧本杀31群"
+                },
+                {
+                    "id": "47388405090@chatroom",
+                    "name": "剧本杀15群"
+                }
+            ],
+            "_monitored_chatroom_ids_comment": "需要监听的微信群列表。id 是微信 chatroom ID，name 是给人看的群名备注；只有这些群里的消息才会进入剧本杀拼本处理。",
+            "trigger_keywords": [
+                "🥤",
+                "补贴",
+                "🈳",
+                "🆘",
+                "🉑️",
+                "🚗",
+                "免单",
+                "上车",
+                "极限",
+                "❗"
+            ],
+            "_trigger_keywords_comment": "触发剧本杀拼本处理的关键词列表。文本消息包含任意一个关键词就会处理。",
             "raw_table": "jubensha_all_content",
-            "booking_table": "jubensha_booking"
+            "_raw_table_comment": "保存原始群聊文本消息的 MySQL 表名。",
+            "booking_table": "jubensha_booking",
+            "_booking_table_comment": "保存结构化拼本预约数据的 MySQL 表名。",
+            "poster_sender": {
+                "_comment": "剧本杀预约海报定时发送配置。JSON 不支持 // 注释，所以这里用 _comment 字段说明含义。",
+                "enabled": false,
+                "_enabled_comment": "是否启用定时发送预约海报。true=启用，false=关闭。",
+                "target_chat": "境由心造",
+                "_target_chat_comment": "发送目标群聊名称，会传给 wx.SendFiles 的 who 参数。",
+                "exact": false,
+                "_exact_comment": "搜索群聊时是否精确匹配。true=必须完全等于 target_chat，false=允许模糊匹配。",
+                "times": [
+                    "10:01",
+                    "14:01",
+                    "20:01"
+                ],
+                "_times_comment": "每天发送时间，24 小时制 HH:MM。示例：10:01 表示上午 10 点 01 分。"
+            }
         }
     }
 }

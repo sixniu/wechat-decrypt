@@ -67,12 +67,38 @@ def _build_services() -> list[object]:
         "[services] jubensha_booking 已启用: "
         f"provider={jubensha_cfg.get('provider', PROVIDER_ZHIPU)}, "
         f"raw_table={jubensha_cfg.get('raw_table', 'jubensha_all_content')}, "
-        f"booking_table={jubensha_cfg.get('booking_table', 'jubensha_booking')}",
+        f"booking_table={jubensha_cfg.get('booking_table', 'jubensha_booking')}, "
+        f"monitored_chatrooms={len(jubensha_cfg.get('monitored_chatroom_ids', []))}, "
+        f"trigger_keywords={len(jubensha_cfg.get('trigger_keywords', []))}",
         flush=True,
     )
     return [
         JubenshaBookingService(
             mysql_client=mysql_client,
             provider=jubensha_cfg.get("provider", PROVIDER_ZHIPU),
+            monitored_chatroom_ids=_normalize_chatroom_ids(
+                jubensha_cfg.get("monitored_chatroom_ids", [])
+            ),
+            trigger_keywords=tuple(jubensha_cfg.get("trigger_keywords", [])),
         )
     ]
+
+
+def _normalize_chatroom_ids(raw_chatrooms: object) -> tuple[str, ...]:
+    """兼容字符串列表和带 name 的对象列表。"""
+    chatroom_ids: list[str] = []
+    if not isinstance(raw_chatrooms, list):
+        return ()
+
+    for item in raw_chatrooms:
+        if isinstance(item, str):
+            chatroom_id = item.strip()
+        elif isinstance(item, dict):
+            chatroom_id = str(item.get("id") or "").strip()
+        else:
+            chatroom_id = ""
+
+        if chatroom_id:
+            chatroom_ids.append(chatroom_id)
+
+    return tuple(chatroom_ids)

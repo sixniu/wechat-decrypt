@@ -6,13 +6,26 @@ from services.jubensha_booking.mysql_client import JubenshaMySQLClient
 from services.jubensha_booking.service import JubenshaBookingService
 
 REAL_DATETIME = dt.datetime
+TEST_MONITORED_CHATROOM_IDS = ("18614995060@chatroom",)
+TEST_TRIGGER_KEYWORDS = ("补贴", "上车")
+
+
+def build_service(mysql_client, **kwargs):
+    return JubenshaBookingService(
+        mysql_client=mysql_client,
+        monitored_chatroom_ids=kwargs.get(
+            "monitored_chatroom_ids",
+            TEST_MONITORED_CHATROOM_IDS,
+        ),
+        trigger_keywords=kwargs.get("trigger_keywords", TEST_TRIGGER_KEYWORDS),
+    )
 
 
 class JubenshaBookingServiceTests(unittest.TestCase):
     def test_service_only_handles_text_messages_with_keywords(self):
         mysql_client = MagicMock()
         mysql_client.reserve_raw_message.return_value = False
-        service = JubenshaBookingService(mysql_client=mysql_client)
+        service = build_service(mysql_client)
 
         service.handle_message(
             {
@@ -29,7 +42,7 @@ class JubenshaBookingServiceTests(unittest.TestCase):
 
     def test_service_skips_non_group_messages(self):
         mysql_client = MagicMock()
-        service = JubenshaBookingService(mysql_client=mysql_client)
+        service = build_service(mysql_client)
 
         service.handle_message(
             {
@@ -45,7 +58,7 @@ class JubenshaBookingServiceTests(unittest.TestCase):
 
     def test_service_skips_non_text_messages(self):
         mysql_client = MagicMock()
-        service = JubenshaBookingService(mysql_client=mysql_client)
+        service = build_service(mysql_client)
 
         service.handle_message(
             {
@@ -62,7 +75,7 @@ class JubenshaBookingServiceTests(unittest.TestCase):
     def test_service_skips_unmonitored_group_messages(self):
         mysql_client = MagicMock()
         mysql_client.reserve_raw_message.return_value = False
-        service = JubenshaBookingService(mysql_client=mysql_client)
+        service = build_service(mysql_client)
 
         with patch("builtins.print") as mocked_print:
             service.handle_message(
@@ -79,10 +92,32 @@ class JubenshaBookingServiceTests(unittest.TestCase):
         mysql_client.reserve_raw_message.assert_not_called()
         mocked_print.assert_not_called()
 
+    def test_service_uses_configured_chatrooms_and_keywords(self):
+        mysql_client = MagicMock()
+        mysql_client.reserve_raw_message.return_value = False
+        service = build_service(
+            mysql_client,
+            monitored_chatroom_ids=("custom@chatroom",),
+            trigger_keywords=("自定义关键词",),
+        )
+
+        service.handle_message(
+            {
+                "type": "文本",
+                "content": "这里包含自定义关键词",
+                "is_group": True,
+                "chat_id": "custom@chatroom",
+                "sender": "顾飞雪",
+                "sender_id": "wxid_123",
+            }
+        )
+
+        mysql_client.reserve_raw_message.assert_called_once()
+
     def test_service_uses_listener_sender_fields_for_booking_user(self):
         mysql_client = MagicMock()
         mysql_client.reserve_raw_message.return_value = True
-        service = JubenshaBookingService(mysql_client=mysql_client)
+        service = build_service(mysql_client)
 
         result = {
             "data": [
@@ -118,7 +153,7 @@ class JubenshaBookingServiceTests(unittest.TestCase):
     def test_service_ignores_ai_identity_fields(self):
         mysql_client = MagicMock()
         mysql_client.reserve_raw_message.return_value = True
-        service = JubenshaBookingService(mysql_client=mysql_client)
+        service = build_service(mysql_client)
 
         result = {
             "data": [
@@ -154,7 +189,7 @@ class JubenshaBookingServiceTests(unittest.TestCase):
 
     def test_service_prints_summary_when_minute_rolls(self):
         mysql_client = MagicMock()
-        service = JubenshaBookingService(mysql_client=mysql_client)
+        service = build_service(mysql_client)
         service._stats_bucket_minute = 100
         service._stats["matched"] = 2
         service._stats["ai_failed"] = 1

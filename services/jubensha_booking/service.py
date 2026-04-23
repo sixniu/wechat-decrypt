@@ -11,7 +11,7 @@ from zhipu_chat_demo import PROVIDER_ZHIPU, JubenshaExtractionError, extract_jub
 
 from ..base import MessagePayload, MessageService
 from ..log_stream import emit_service_log
-from .constants import DISCOUNT_LABELS, MONITORED_CHATROOM_IDS, TRIGGER_KEYWORDS
+from .constants import DISCOUNT_LABELS
 from .mysql_client import JubenshaMySQLClient
 
 
@@ -24,10 +24,14 @@ class JubenshaBookingService(MessageService):
         self,
         *,
         mysql_client: JubenshaMySQLClient,
+        monitored_chatroom_ids: tuple[str, ...],
+        trigger_keywords: tuple[str, ...],
         provider: str = PROVIDER_ZHIPU,
     ) -> None:
         self._mysql_client = mysql_client
         self._provider = provider
+        self._monitored_chatroom_ids = monitored_chatroom_ids
+        self._trigger_keywords = trigger_keywords
         self._stats_lock = threading.Lock()
         self._stats_bucket_minute = self._current_minute()
         self._stats = self._empty_stats()
@@ -40,7 +44,7 @@ class JubenshaBookingService(MessageService):
             return
 
         chatroom_id = self._resolve_chatroom_id(message)
-        if chatroom_id not in MONITORED_CHATROOM_IDS:
+        if chatroom_id not in self._monitored_chatroom_ids:
             self._record_stat("skip_unmonitored_group")
             return
 
@@ -49,7 +53,9 @@ class JubenshaBookingService(MessageService):
             self._record_stat("skip_non_text")
             return
 
-        matched_keywords = [keyword for keyword in TRIGGER_KEYWORDS if keyword in content]
+        matched_keywords = [
+            keyword for keyword in self._trigger_keywords if keyword in content
+        ]
         if not matched_keywords:
             self._record_stat("skip_no_keyword")
             return

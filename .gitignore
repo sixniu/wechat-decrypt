@@ -1,13 +1,33 @@
-# Decrypted databases and keys - NEVER upload
+# Local secrets and runtime config - NEVER upload
 all_keys.json
 wechat_key.txt
 config.json
+services/config.json
+*.key
+*.pem
+*.p12
+*.pfx
+*.env
+.env
+
+# Decrypted databases, decoded media and local WeChat data
 decrypted/
 decoded_images/
 *.db
 *.db-shm
 *.db-wal
+*.db-journal
 *.db.tmp_monitor
+*.sqlite
+*.sqlite3
+
+# Logs and runtime output
+logs/
+wxauto_logs/
+*.log
+*.pid
+*.tmp
+*.temp
 
 # Hook outputs
 hook_output.txt
@@ -15,10 +35,28 @@ hook_start_output.txt
 hook_stderr.txt
 run_hook.bat
 
+# Local test or scratch files
+*.local.json
+*.bak
+*.orig
+
 # Python
 __pycache__/
 *.py[cod]
 *.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Native build outputs
+*.exe
+*.dll
+*.so
+*.dylib
+*.o
+*.obj
 
 # OS
 .DS_Store

@@ -10,6 +10,7 @@ import hashlib, struct, os, sys, json, time, sqlite3, io, threading, queue, trac
 import hmac as hmac_mod
 import re
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
@@ -22,9 +23,13 @@ from key_utils import get_key_info, strip_key_metadata
 from services import (
     dispatch_message_to_services,
     get_service_log_history,
+    load_service_config,
+    load_service_config_strict,
     set_service_log_sink,
     shutdown_service_manager,
 )
+from services.config_loader import SERVICE_CONFIG_FILE
+from services.jubensha_booking import start_booking_poster_scheduler
 
 _zstd_dctx = zstd.ZstdDecompressor()
 
@@ -59,6 +64,18 @@ MAX_LOG = 500
 _img_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix='img')
 _hidden_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hidden')
 _shutdown_event = threading.Event()
+WECHAT_CLIENT = None
+BOOKING_POSTER_SCHEDULER = None
+CONFIG_RELOADER = None
+
+
+@dataclass(frozen=True)
+class RuntimeConfigReloader:
+    thread: threading.Thread
+    stop_event: threading.Event
+
+    def stop(self):
+        self.stop_event.set()
 
 
 def _safe_submit(executor, fn, *args):
@@ -68,6 +85,96 @@ def _safe_submit(executor, fn, *args):
     try:
         return executor.submit(fn, *args)
     except RuntimeError:
+        return None
+
+
+def stop_booking_poster_scheduler_if_running():
+    """停止当前预约海报定时器。"""
+    global BOOKING_POSTER_SCHEDULER
+    if BOOKING_POSTER_SCHEDULER is not None:
+        BOOKING_POSTER_SCHEDULER.stop()
+        BOOKING_POSTER_SCHEDULER = None
+
+
+def start_booking_poster_scheduler_if_enabled(wx, cfg=None):
+    """按 services 配置启动剧本杀预约海报定时发送。"""
+    global BOOKING_POSTER_SCHEDULER
+    if wx is None:
+        print("[services][jubensha][poster] 未启动: wx 未初始化", flush=True)
+        return None
+
+    cfg = cfg or load_service_config()
+    poster_cfg = (
+        cfg.get("services", {})
+        .get("jubensha_booking", {})
+        .get("poster_sender", {})
+    )
+    if not poster_cfg.get("enabled"):
+        stop_booking_poster_scheduler_if_running()
+        print("[services][jubensha][poster] 未启用: enabled=false", flush=True)
+        return None
+
+    stop_booking_poster_scheduler_if_running()
+    BOOKING_POSTER_SCHEDULER = start_booking_poster_scheduler(
+        wx=wx,
+        who=poster_cfg.get("target_chat", "境由心造"),
+        schedule_times=poster_cfg.get("times", ["10:01", "14:01", "20:01"]),
+        exact=bool(poster_cfg.get("exact", False)),
+    )
+    print("[services][jubensha][poster] 定时发送已启用", flush=True)
+    return BOOKING_POSTER_SCHEDULER
+
+
+def reload_runtime_service_config(wx):
+    """热加载 services/config.json，失败时保留当前运行状态。"""
+    try:
+        cfg = load_service_config_strict()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[services][config] 配置重载失败，继续使用旧配置: {exc}", flush=True)
+        return False
+
+    print("[services][config] 检测到配置变化，正在重载", flush=True)
+    shutdown_service_manager(wait=False)
+    start_booking_poster_scheduler_if_enabled(wx, cfg=cfg)
+    print("[services][config] 配置已重载", flush=True)
+    return True
+
+
+def start_runtime_config_reloader(
+    wx,
+    *,
+    interval_seconds=5,
+    config_path=SERVICE_CONFIG_FILE,
+    stop_event=None,
+    daemon=True,
+):
+    """启动配置文件热加载轮询线程。"""
+    event = stop_event or threading.Event()
+    last_mtime = _get_config_mtime(config_path)
+
+    def _run():
+        nonlocal last_mtime
+        while not event.wait(interval_seconds):
+            current_mtime = _get_config_mtime(config_path)
+            if current_mtime is None or current_mtime == last_mtime:
+                continue
+            reload_runtime_service_config(wx)
+            last_mtime = current_mtime
+
+    thread = threading.Thread(
+        target=_run,
+        name="services-config-reloader",
+        daemon=daemon,
+    )
+    thread.start()
+    print("[services][config] 配置热加载已启用", flush=True)
+    return RuntimeConfigReloader(thread=thread, stop_event=event)
+
+
+def _get_config_mtime(config_path):
+    try:
+        return os.path.getmtime(config_path)
+    except OSError:
         return None
 
 # ---- Emoji 缓存 (md5 → {cdn_url, aes_key, encrypt_url}) ----
@@ -2255,10 +2362,17 @@ class ThreadedServer(ThreadingMixIn, HTTPServer):
     allow_reuse_address = True
 
 
-def main():
+def main(wx=None):
+    global CONFIG_RELOADER, WECHAT_CLIENT
+    WECHAT_CLIENT = wx
+
     print("=" * 60, flush=True)
     print("  微信实时监听 (WAL增量 + SSE推送)", flush=True)
     print("=" * 60, flush=True)
+    if WECHAT_CLIENT is not None:
+        print("[wx] 已接收 main.py 初始化的微信实例", flush=True)
+    start_booking_poster_scheduler_if_enabled(WECHAT_CLIENT)
+    CONFIG_RELOADER = start_runtime_config_reloader(WECHAT_CLIENT)
 
     with open(KEYS_FILE, encoding="utf-8") as f:
         keys = strip_key_metadata(json.load(f))
@@ -2347,6 +2461,9 @@ def main():
     except KeyboardInterrupt:
         _shutdown_event.set()
         set_service_log_sink(None)
+        if CONFIG_RELOADER is not None:
+            CONFIG_RELOADER.stop()
+        stop_booking_poster_scheduler_if_running()
         shutdown_service_manager(wait=False)
         _img_executor.shutdown(wait=False, cancel_futures=True)
         _hidden_executor.shutdown(wait=False, cancel_futures=True)
