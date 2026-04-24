@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 from services.jubensha_booking.poster_scheduler import (
     BookingPosterScheduleError,
+    next_booking_poster_run_with_random_delay,
     next_booking_poster_run,
     start_booking_poster_scheduler,
 )
@@ -24,6 +25,17 @@ class BookingPosterSchedulerTests(unittest.TestCase):
 
         self.assertEqual(result, dt.datetime(2026, 4, 24, 10, 1))
 
+    def test_next_run_with_random_delay_adds_seconds_after_base_time(self):
+        now = dt.datetime(2026, 4, 23, 9, 30)
+
+        result = next_booking_poster_run_with_random_delay(
+            now,
+            ["10:01"],
+            random_delay_seconds=lambda: 122,
+        )
+
+        self.assertEqual(result, dt.datetime(2026, 4, 23, 10, 3, 2))
+
     def test_next_run_rejects_invalid_time(self):
         with self.assertRaises(BookingPosterScheduleError):
             next_booking_poster_run(dt.datetime(2026, 4, 23, 9, 30), ["25:01"])
@@ -42,11 +54,13 @@ class BookingPosterSchedulerTests(unittest.TestCase):
                 schedule_times=["10:01"],
                 stop_event=stop_event,
                 clock=lambda: now,
+                random_delay_seconds=lambda: 37,
                 daemon=False,
                 logger=lambda _: None,
             )
             scheduler.thread.join(timeout=2)
 
+        self.assertEqual(stop_event.wait_timeouts[0], 37)
         mocked_send.assert_called_once_with(
             who_list=["境由心造", "拼好本"],
             wx=wx,
@@ -57,8 +71,10 @@ class BookingPosterSchedulerTests(unittest.TestCase):
 class _FakeStopEvent:
     def __init__(self, wait_results):
         self._wait_results = list(wait_results)
+        self.wait_timeouts = []
 
-    def wait(self, _timeout):
+    def wait(self, timeout):
+        self.wait_timeouts.append(timeout)
         return self._wait_results.pop(0)
 
     def is_set(self):

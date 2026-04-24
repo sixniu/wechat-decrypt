@@ -14,6 +14,7 @@ from .poster_scheduler import (
     BookingPosterScheduleError,
     BookingPosterScheduler,
     next_booking_poster_run,
+    next_booking_poster_run_with_random_delay,
     start_booking_poster_scheduler,
 )
 from .service import JubenshaBookingService
@@ -28,6 +29,7 @@ __all__ = [
     "fetch_booking_poster_url",
     "generate_booking_poster",
     "next_booking_poster_run",
+    "next_booking_poster_run_with_random_delay",
     "send_booking_poster_to_chat",
     "send_booking_poster_to_chats",
     "send_poster_to_chat",
