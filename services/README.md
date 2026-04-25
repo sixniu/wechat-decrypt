@@ -16,16 +16,18 @@
 - `jubensha_booking`：群聊文本消息命中关键词后，调用 AI 提取并写入 MySQL
 - `jubensha_booking.poster_sender`：主动请求预约海报接口，下载 `data.url` 图片并发送到指定微信聊天对象
 - `jubensha_booking.poster_scheduler`：在 `web_new` 启动后每天按配置时间定时发送预约海报
+- `wechat_client`：封装 wxautox4 的发送文件、发送文本、艾特全体等微信自动化能力
 
 预约海报发送示例：
 
 ```python
 from wxautox4 import WeChat
-from services.jubensha_booking import generate_booking_poster, send_poster_to_chat
+from services import send_file
+from services.jubensha_booking import generate_booking_poster
 
 wx = WeChat()
 poster_path = generate_booking_poster()
-send_poster_to_chat(poster_path, who="群聊名称", wx=wx, exact=False)
+send_file(wx=wx, filepath=poster_path, who="群聊名称", exact=False)
 ```
 
 预约海报多群发送示例：
@@ -40,6 +42,18 @@ send_booking_poster_to_chats(
     wx=wx,
     exact=True,
 )
+```
+
+微信自动化发送示例：
+
+```python
+from wxautox4 import WeChat
+from services import at_all, send_file, send_text
+
+wx = WeChat()
+send_file(wx=wx, filepath="C:/文件.txt", who="张三", exact=False)
+send_text(wx=wx, msg="你好", who="张三", clear=True, at="李四", exact=False)
+at_all(wx=wx, msg="通知内容", who="工作群", exact=False)
 ```
 
 预约海报定时发送：

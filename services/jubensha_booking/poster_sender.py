@@ -10,6 +10,8 @@ from typing import Any
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from services.wechat_client import WechatClientError, send_file
+
 DEFAULT_BOOKING_POSTER_API_URL = "https://www.shisan.ink/api/booking/poster"
 
 
@@ -143,8 +145,9 @@ def send_poster_to_chat(
         raise BookingPosterError("海报文件路径不能为空")
 
     try:
-        wx.SendFiles(filepath=filepath, who=who, exact=exact)
-    except Exception as exc:  # noqa: BLE001
+        # 海报业务只负责决定发送哪个文件和目标，实际微信发送能力由通用封装处理。
+        send_file(wx=wx, filepath=filepath, who=who, exact=exact)
+    except WechatClientError as exc:
         raise BookingPosterError(f"发送微信文件失败: {exc}") from exc
     return filepath
 

@@ -8,6 +8,7 @@ from services.jubensha_booking.poster_sender import (
     BookingPosterError,
     send_booking_poster_to_chat,
     send_booking_poster_to_chats,
+    send_poster_to_chat,
 )
 
 
@@ -101,6 +102,25 @@ class BookingPosterSenderTests(unittest.TestCase):
         self.assertEqual(wx.SendFiles.call_count, 2)
         wx.SendFiles.assert_any_call(filepath=saved_path, who="群A", exact=True)
         wx.SendFiles.assert_any_call(filepath=saved_path, who="群B", exact=True)
+
+    def test_send_poster_to_chat_delegates_to_wechat_client_send_file(self):
+        wx = MagicMock()
+
+        with patch("services.jubensha_booking.poster_sender.send_file") as mocked_send_file:
+            result = send_poster_to_chat(
+                "C:/posters/demo.png",
+                who="测试群",
+                wx=wx,
+                exact=True,
+            )
+
+        self.assertEqual(result, "C:/posters/demo.png")
+        mocked_send_file.assert_called_once_with(
+            wx=wx,
+            filepath="C:/posters/demo.png",
+            who="测试群",
+            exact=True,
+        )
 
 
 class _FakeResponse:

@@ -1,6 +1,7 @@
 """消息服务总入口。"""
 
 from .config_loader import load_service_config, load_service_config_strict
+from .wechat_client import WechatClientError, at_all, send_file, send_text
 from .jubensha_booking import (
     BookingPosterError,
     download_poster_image,
@@ -15,6 +16,8 @@ from .registry import dispatch_message_to_services, get_service_manager, shutdow
 
 __all__ = [
     "BookingPosterError",
+    "WechatClientError",
+    "at_all",
     "dispatch_message_to_services",
     "download_poster_image",
     "fetch_booking_poster_url",
@@ -23,9 +26,11 @@ __all__ = [
     "get_service_log_history",
     "load_service_config",
     "load_service_config_strict",
+    "send_file",
     "send_booking_poster_to_chat",
     "send_booking_poster_to_chats",
     "send_poster_to_chat",
+    "send_text",
     "set_service_log_sink",
     "shutdown_service_manager",
 ]
