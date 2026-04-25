@@ -25,11 +25,17 @@ from services import (
     get_service_log_history,
     load_service_config,
     load_service_config_strict,
+    set_service_wechat_client,
     set_service_log_sink,
     shutdown_service_manager,
 )
 from services.config_loader import SERVICE_CONFIG_FILE
-from services.jubensha_booking import start_booking_poster_scheduler
+from services.jubensha_booking import (
+    FreeDiscountNoticePoller,
+    FreeDiscountNotifier,
+    start_booking_poster_scheduler,
+    start_free_discount_notice_poller,
+)
 
 _zstd_dctx = zstd.ZstdDecompressor()
 
@@ -66,6 +72,7 @@ _hidden_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hidden'
 _shutdown_event = threading.Event()
 WECHAT_CLIENT = None
 BOOKING_POSTER_SCHEDULER = None
+FREE_DISCOUNT_NOTICE_POLLER = None
 CONFIG_RELOADER = None
 
 
@@ -96,6 +103,14 @@ def stop_booking_poster_scheduler_if_running():
         BOOKING_POSTER_SCHEDULER = None
 
 
+def stop_free_discount_notice_poller_if_running():
+    """停止当前免单通知服务器轮询器。"""
+    global FREE_DISCOUNT_NOTICE_POLLER
+    if FREE_DISCOUNT_NOTICE_POLLER is not None:
+        FREE_DISCOUNT_NOTICE_POLLER.stop()
+        FREE_DISCOUNT_NOTICE_POLLER = None
+
+
 def start_booking_poster_scheduler_if_enabled(wx, cfg=None):
     """按 services 配置启动剧本杀预约海报定时发送。"""
     global BOOKING_POSTER_SCHEDULER
@@ -116,6 +131,9 @@ def start_booking_poster_scheduler_if_enabled(wx, cfg=None):
 
     stop_booking_poster_scheduler_if_running()
     target_chats = _normalize_target_chats(poster_cfg)
+    if not target_chats:
+        print("[services][jubensha][poster] 未启动: target_chats 为空", flush=True)
+        return None
     BOOKING_POSTER_SCHEDULER = start_booking_poster_scheduler(
         wx=wx,
         who_list=target_chats,
@@ -124,6 +142,56 @@ def start_booking_poster_scheduler_if_enabled(wx, cfg=None):
     )
     print("[services][jubensha][poster] 定时发送已启用", flush=True)
     return BOOKING_POSTER_SCHEDULER
+
+
+def start_free_discount_notice_poller_if_enabled(wx, cfg=None):
+    """按 services 配置启动服务器免单通知任务轮询。"""
+    global FREE_DISCOUNT_NOTICE_POLLER
+    if wx is None:
+        print("[services][jubensha][free-poller] 未启动: wx 未初始化", flush=True)
+        return None
+
+    cfg = cfg or load_service_config()
+    poller_cfg = (
+        cfg.get("services", {})
+        .get("jubensha_booking", {})
+        .get("free_discount_notice_poller", {})
+    )
+    if not poller_cfg.get("enabled"):
+        stop_free_discount_notice_poller_if_running()
+        print("[services][jubensha][free-poller] 未启用: enabled=false", flush=True)
+        return None
+
+    stop_free_discount_notice_poller_if_running()
+    target_chats = _normalize_target_chats(poller_cfg)
+    if not target_chats:
+        print("[services][jubensha][free-poller] 未启动: target_chats 为空", flush=True)
+        return None
+
+    api_base_url = str(poller_cfg.get("api_base_url") or "").strip()
+    token = str(poller_cfg.get("token") or "").strip()
+    if not api_base_url or not token:
+        print("[services][jubensha][free-poller] 未启动: api_base_url 或 token 为空", flush=True)
+        return None
+
+    notifier = FreeDiscountNotifier(
+        wx=wx,
+        target_chats=tuple(target_chats),
+        exact=bool(poller_cfg.get("exact", False)),
+    )
+    poller = FreeDiscountNoticePoller(
+        api_base_url=api_base_url,
+        token=token,
+        notifier=notifier,
+        limit=int(poller_cfg.get("limit", 10)),
+        timeout=float(poller_cfg.get("timeout", 10)),
+    )
+    FREE_DISCOUNT_NOTICE_POLLER = start_free_discount_notice_poller(
+        poller=poller,
+        interval_seconds=float(poller_cfg.get("interval_seconds", 10)),
+    )
+    print("[services][jubensha][free-poller] 免单通知轮询已启用", flush=True)
+    return FREE_DISCOUNT_NOTICE_POLLER
 
 
 def reload_runtime_service_config(wx):
@@ -136,7 +204,9 @@ def reload_runtime_service_config(wx):
 
     print("[services][config] 检测到配置变化，正在重载", flush=True)
     shutdown_service_manager(wait=False)
+    set_service_wechat_client(wx)
     start_booking_poster_scheduler_if_enabled(wx, cfg=cfg)
+    start_free_discount_notice_poller_if_enabled(wx, cfg=cfg)
     print("[services][config] 配置已重载", flush=True)
     return True
 
@@ -180,18 +250,12 @@ def _get_config_mtime(config_path):
 
 
 def _normalize_target_chats(poster_cfg):
-    """统一兼容单群配置和多群配置，返回目标群聊名称列表。"""
+    """规范化预约海报发送目标群聊配置。"""
     target_chats = poster_cfg.get("target_chats")
     if isinstance(target_chats, list):
-        targets = [str(item).strip() for item in target_chats if str(item).strip()]
-        if targets:
-            return targets
+        return [str(item).strip() for item in target_chats if str(item).strip()]
 
-    target_chat = str(poster_cfg.get("target_chat") or "").strip()
-    if target_chat:
-        return [target_chat]
-
-    return ["境由心造"]
+    return []
 
 # ---- Emoji 缓存 (md5 → {cdn_url, aes_key, encrypt_url}) ----
 _emoji_lookup = {}       # md5 → dict
@@ -2381,6 +2445,7 @@ class ThreadedServer(ThreadingMixIn, HTTPServer):
 def main(wx=None):
     global CONFIG_RELOADER, WECHAT_CLIENT
     WECHAT_CLIENT = wx
+    set_service_wechat_client(WECHAT_CLIENT)
 
     print("=" * 60, flush=True)
     print("  微信实时监听 (WAL增量 + SSE推送)", flush=True)
@@ -2388,6 +2453,7 @@ def main(wx=None):
     if WECHAT_CLIENT is not None:
         print("[wx] 已接收 main.py 初始化的微信实例", flush=True)
     start_booking_poster_scheduler_if_enabled(WECHAT_CLIENT)
+    start_free_discount_notice_poller_if_enabled(WECHAT_CLIENT)
     CONFIG_RELOADER = start_runtime_config_reloader(WECHAT_CLIENT)
 
     with open(KEYS_FILE, encoding="utf-8") as f:
@@ -2480,6 +2546,7 @@ def main(wx=None):
         if CONFIG_RELOADER is not None:
             CONFIG_RELOADER.stop()
         stop_booking_poster_scheduler_if_running()
+        stop_free_discount_notice_poller_if_running()
         shutdown_service_manager(wait=False)
         _img_executor.shutdown(wait=False, cancel_futures=True)
         _hidden_executor.shutdown(wait=False, cancel_futures=True)

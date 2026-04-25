@@ -47,12 +47,12 @@ class ServiceConfigLoaderTests(unittest.TestCase):
             cfg["services"]["jubensha_booking"]["trigger_keywords"],
         )
         self.assertEqual(
-            cfg["services"]["jubensha_booking"]["poster_sender"]["target_chat"],
-            "境由心造",
-        )
-        self.assertEqual(
             cfg["services"]["jubensha_booking"]["poster_sender"]["target_chats"],
             ["境由心造"],
+        )
+        self.assertNotIn(
+            "target_chat",
+            cfg["services"]["jubensha_booking"]["poster_sender"],
         )
         self.assertEqual(
             cfg["services"]["jubensha_booking"]["poster_sender"]["times"],
@@ -65,6 +65,24 @@ class ServiceConfigLoaderTests(unittest.TestCase):
         self.assertEqual(
             cfg["services"]["jubensha_booking"]["allowed_time_range"]["end"],
             "20:00",
+        )
+        self.assertFalse(
+            cfg["services"]["jubensha_booking"]["free_discount_notifier"]["enabled"]
+        )
+        self.assertEqual(
+            cfg["services"]["jubensha_booking"]["free_discount_notifier"]["target_chats"],
+            [],
+        )
+        self.assertNotIn(
+            "target_chat",
+            cfg["services"]["jubensha_booking"]["free_discount_notifier"],
+        )
+        self.assertFalse(
+            cfg["services"]["jubensha_booking"]["free_discount_notice_poller"]["enabled"]
+        )
+        self.assertEqual(
+            cfg["services"]["jubensha_booking"]["free_discount_notice_poller"]["target_chats"],
+            [],
         )
 
 

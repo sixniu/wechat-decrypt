@@ -13,6 +13,7 @@ from zhipu_chat_demo import PROVIDER_ZHIPU, JubenshaExtractionError, extract_jub
 from ..base import MessagePayload, MessageService
 from ..log_stream import emit_service_log
 from .constants import DISCOUNT_LABELS
+from .free_discount_notifier import FreeDiscountNotifier
 from .mysql_client import JubenshaMySQLClient
 
 
@@ -29,6 +30,7 @@ class JubenshaBookingService(MessageService):
         trigger_keywords: tuple[str, ...],
         allowed_time_range: tuple[str, str],
         provider: str = PROVIDER_ZHIPU,
+        free_discount_notifier: FreeDiscountNotifier | None = None,
     ) -> None:
         """初始化剧本杀拼本消息服务。
 
@@ -38,12 +40,14 @@ class JubenshaBookingService(MessageService):
         - trigger_keywords: 触发消息提取的关键词列表。
         - allowed_time_range: 每日允许处理的时间范围，格式为 `(start, end)`，值为 `HH:MM`。
         - provider: AI 提取服务提供商名称。
+        - free_discount_notifier: 免单新增记录通知器；不传时不发送微信群通知。
         """
         self._mysql_client = mysql_client
         self._provider = provider
         self._monitored_chatroom_ids = monitored_chatroom_ids
         self._trigger_keywords = trigger_keywords
         self._allowed_time_range = self._parse_allowed_time_range(allowed_time_range)
+        self._free_discount_notifier = free_discount_notifier
         self._stats_lock = threading.Lock()
         self._stats_bucket_minute = self._current_minute()
         self._stats = self._empty_stats()
@@ -153,7 +157,7 @@ class JubenshaBookingService(MessageService):
                 sender_wx_id,
                 sender_wechat_no,
             )
-            self._mysql_client.upsert_booking(booking_item)
+            upsert_result = self._mysql_client.upsert_booking(booking_item)
             self._record_stat("booking_upserted")
             self._log(
                 trace_id,
@@ -163,8 +167,47 @@ class JubenshaBookingService(MessageService):
                 f"script={booking_item['script_name']}",
                 data=booking_item,
             )
+            if self._should_notify_free_discount(upsert_result):
+                self._notify_free_discount(trace_id, booking_item)
 
         self._log(trace_id, "处理完成")
+
+    def _should_notify_free_discount(self, upsert_result: Any) -> bool:
+        """判断本次入库结果是否需要触发免单通知。
+
+        参数:
+        - upsert_result: MySQL 客户端 `upsert_booking` 返回的新增/更新结果。
+
+        返回值:
+        - 仅当已配置通知器且本次是新增记录时返回 True，否则返回 False。
+        """
+        if self._free_discount_notifier is None:
+            return False
+        if isinstance(upsert_result, dict):
+            return bool(upsert_result.get("created"))
+        return False
+
+    def _notify_free_discount(
+        self,
+        trace_id: str,
+        booking_item: dict[str, str],
+    ) -> None:
+        """向免单通知器投递新增拼本记录。
+
+        参数:
+        - trace_id: 当前消息处理链路 ID，用于输出日志。
+        - booking_item: 已成功新增入库的拼本业务数据。
+
+        返回值:
+        - 无返回值；通知失败时记录错误日志，避免影响主入库流程。
+        """
+        if self._free_discount_notifier is None:
+            return
+
+        try:
+            self._free_discount_notifier.notify_if_needed(booking_item)
+        except Exception as exc:  # noqa: BLE001
+            self._log(trace_id, f"免单通知发送失败: {exc}", kind="error")
 
     @staticmethod
     def _extract_content(message: MessagePayload) -> str:

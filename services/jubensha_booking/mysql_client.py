@@ -82,8 +82,18 @@ class JubenshaMySQLClient:
         finally:
             conn.close()
 
-    def upsert_booking(self, item: dict[str, Any]) -> None:
-        """按业务唯一键插入或更新拼本记录。"""
+    def upsert_booking(self, item: dict[str, Any]) -> dict[str, Any]:
+        """按业务唯一键插入或更新拼本记录。
+
+        参数:
+        - item: 已标准化的拼本业务数据，包含用户、时间、门店、剧本和优惠类型等字段。
+
+        返回值:
+        - 返回包含 unique_no、created、updated 的字典；created=True 表示本次新增。
+
+        失败行为:
+        - 数据库连接或 SQL 执行失败时抛出底层异常，由上层服务记录错误。
+        """
         unique_no = self.build_booking_unique_no(
             item["booking_time"],
             item["store_name"],
@@ -154,6 +164,11 @@ class JubenshaMySQLClient:
                             unique_no,
                         ),
                     )
+                    return {
+                        "unique_no": unique_no,
+                        "created": False,
+                        "updated": True,
+                    }
                 else:
                     cursor.execute(
                         f"""
@@ -166,6 +181,11 @@ class JubenshaMySQLClient:
                         """,
                         params,
                     )
+                    return {
+                        "unique_no": unique_no,
+                        "created": True,
+                        "updated": False,
+                    }
         finally:
             conn.close()
 

@@ -20,6 +20,7 @@ def build_service(mysql_client, **kwargs):
         ),
         trigger_keywords=kwargs.get("trigger_keywords", TEST_TRIGGER_KEYWORDS),
         allowed_time_range=kwargs.get("allowed_time_range", ("09:30", "20:00")),
+        free_discount_notifier=kwargs.get("free_discount_notifier"),
     )
 
 
@@ -209,6 +210,76 @@ class JubenshaBookingServiceTests(unittest.TestCase):
         self.assertEqual(booking_item["user_name"], "顾飞雪")
         self.assertEqual(booking_item["user_id"], "wxid_123")
         self.assertEqual(booking_item["wechat_no"], "")
+
+    def test_service_notifies_when_new_free_discount_booking_is_inserted(self):
+        mysql_client = MagicMock()
+        mysql_client.reserve_raw_message.return_value = True
+        mysql_client.upsert_booking.return_value = {"created": True, "updated": False}
+        notifier = MagicMock()
+        service = build_service(
+            mysql_client,
+            free_discount_notifier=notifier,
+        )
+
+        result = {
+            "data": [
+                {
+                    "booking_time": "2026-07-23 14:00",
+                    "store_name": "玩聚",
+                    "script_name": "如故",
+                    "script_details": "免单上车",
+                    "discount_type": "free",
+                }
+            ]
+        }
+
+        with patch("services.jubensha_booking.service.extract_jubensha", return_value=result):
+            service.handle_message(
+                {
+                    "type": "文本",
+                    "content": "7.23玩聚如故免单上车",
+                    "is_group": True,
+                    "chat_id": "18614995060@chatroom",
+                    "sender": "顾飞雪",
+                    "sender_id": "wxid_123",
+                }
+            )
+
+        booking_item = mysql_client.upsert_booking.call_args.args[0]
+        notifier.notify_if_needed.assert_called_once_with(booking_item)
+
+    def test_service_does_not_notify_when_free_discount_booking_is_only_updated(self):
+        mysql_client = MagicMock()
+        mysql_client.reserve_raw_message.return_value = True
+        mysql_client.upsert_booking.return_value = {"created": False, "updated": True}
+        notifier = MagicMock()
+        service = build_service(mysql_client, free_discount_notifier=notifier)
+
+        result = {
+            "data": [
+                {
+                    "booking_time": "2026-07-23 14:00",
+                    "store_name": "玩聚",
+                    "script_name": "如故",
+                    "script_details": "免单上车",
+                    "discount_type": "free",
+                }
+            ]
+        }
+
+        with patch("services.jubensha_booking.service.extract_jubensha", return_value=result):
+            service.handle_message(
+                {
+                    "type": "文本",
+                    "content": "7.23玩聚如故免单上车",
+                    "is_group": True,
+                    "chat_id": "18614995060@chatroom",
+                    "sender": "顾飞雪",
+                    "sender_id": "wxid_123",
+                }
+            )
+
+        notifier.notify_if_needed.assert_not_called()
 
     def test_service_prints_summary_when_minute_rolls(self):
         mysql_client = MagicMock()

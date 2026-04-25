@@ -13,6 +13,7 @@ from .jubensha_booking import (
 )
 from .log_stream import get_service_log_history, set_service_log_sink
 from .registry import dispatch_message_to_services, get_service_manager, shutdown_service_manager
+from .registry import set_service_wechat_client
 
 __all__ = [
     "BookingPosterError",
@@ -31,6 +32,7 @@ __all__ = [
     "send_booking_poster_to_chats",
     "send_poster_to_chat",
     "send_text",
+    "set_service_wechat_client",
     "set_service_log_sink",
     "shutdown_service_manager",
 ]

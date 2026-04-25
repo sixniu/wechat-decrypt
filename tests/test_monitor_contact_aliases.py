@@ -87,6 +87,94 @@ class MonitorBookingPosterSchedulerTests(unittest.TestCase):
             exact=False,
         )
 
+    def test_start_booking_poster_scheduler_skips_when_target_chats_empty(self):
+        wx = MagicMock()
+        cfg = {
+            "services": {
+                "jubensha_booking": {
+                    "poster_sender": {
+                        "enabled": True,
+                        "target_chats": [],
+                        "exact": False,
+                        "times": ["10:01"],
+                    }
+                }
+            }
+        }
+
+        with patch.object(monitor_web_new, "load_service_config", return_value=cfg):
+            with patch.object(
+                monitor_web_new,
+                "start_booking_poster_scheduler",
+            ) as mocked_start:
+                result = monitor_web_new.start_booking_poster_scheduler_if_enabled(wx)
+
+        self.assertIsNone(result)
+        mocked_start.assert_not_called()
+
+    def test_start_free_discount_notice_poller_uses_enabled_config(self):
+        wx = MagicMock()
+        cfg = {
+            "services": {
+                "jubensha_booking": {
+                    "free_discount_notice_poller": {
+                        "enabled": True,
+                        "api_base_url": "https://example.com/api/booking/free-notices",
+                        "token": "secret",
+                        "interval_seconds": 10,
+                        "limit": 5,
+                        "timeout": 3,
+                        "target_chats": ["境由心造"],
+                        "exact": True,
+                    }
+                }
+            }
+        }
+
+        with patch.object(monitor_web_new, "load_service_config", return_value=cfg):
+            with patch.object(monitor_web_new, "start_free_discount_notice_poller") as mocked_start:
+                with patch.object(monitor_web_new, "FreeDiscountNoticePoller") as mocked_poller:
+                    result = monitor_web_new.start_free_discount_notice_poller_if_enabled(wx)
+
+        self.assertIsNotNone(result)
+        mocked_poller.assert_called_once()
+        poller_kwargs = mocked_poller.call_args.kwargs
+        self.assertEqual(
+            poller_kwargs["api_base_url"],
+            "https://example.com/api/booking/free-notices",
+        )
+        self.assertEqual(poller_kwargs["token"], "secret")
+        self.assertEqual(poller_kwargs["limit"], 5)
+        self.assertEqual(poller_kwargs["timeout"], 3)
+        self.assertEqual(poller_kwargs["notifier"]._target_chats, ("境由心造",))
+        self.assertTrue(poller_kwargs["notifier"]._exact)
+        mocked_start.assert_called_once_with(
+            poller=mocked_poller.return_value,
+            interval_seconds=10,
+        )
+
+    def test_start_free_discount_notice_poller_skips_when_target_chats_empty(self):
+        wx = MagicMock()
+        cfg = {
+            "services": {
+                "jubensha_booking": {
+                    "free_discount_notice_poller": {
+                        "enabled": True,
+                        "api_base_url": "https://example.com/api/booking/free-notices",
+                        "token": "secret",
+                        "target_chats": [],
+                    }
+                }
+            }
+        }
+
+        with patch.object(monitor_web_new, "load_service_config", return_value=cfg):
+            with patch.object(monitor_web_new, "start_free_discount_notice_poller") as mocked_start:
+                result = monitor_web_new.start_free_discount_notice_poller_if_enabled(wx)
+
+        self.assertIsNone(result)
+        mocked_start.assert_not_called()
+
     def test_reload_runtime_service_config_restarts_services_and_poster_scheduler(self):
         wx = MagicMock()
         cfg = {
@@ -97,51 +185,69 @@ class MonitorBookingPosterSchedulerTests(unittest.TestCase):
                         "target_chats": ["新群A", "新群B"],
                         "exact": True,
                         "times": ["11:01"],
+                    },
+                    "free_discount_notice_poller": {
+                        "enabled": True,
+                        "api_base_url": "https://example.com/api/booking/free-notices",
+                        "token": "secret",
+                        "target_chats": ["通知群"],
                     }
                 }
             }
         }
         old_scheduler = MagicMock()
+        old_poller = MagicMock()
 
         with patch.object(monitor_web_new, "BOOKING_POSTER_SCHEDULER", old_scheduler):
-            with patch.object(
-                monitor_web_new,
-                "load_service_config_strict",
-                return_value=cfg,
-            ):
-                with patch.object(monitor_web_new, "shutdown_service_manager") as mocked_shutdown:
-                    with patch.object(
-                        monitor_web_new,
-                        "start_booking_poster_scheduler",
-                    ) as mocked_start:
-                        result = monitor_web_new.reload_runtime_service_config(wx)
+            with patch.object(monitor_web_new, "FREE_DISCOUNT_NOTICE_POLLER", old_poller):
+                with patch.object(
+                    monitor_web_new,
+                    "load_service_config_strict",
+                    return_value=cfg,
+                ):
+                    with patch.object(monitor_web_new, "shutdown_service_manager") as mocked_shutdown:
+                        with patch.object(
+                            monitor_web_new,
+                            "start_booking_poster_scheduler",
+                        ) as mocked_start:
+                            with patch.object(
+                                monitor_web_new,
+                                "start_free_discount_notice_poller",
+                            ) as mocked_start_poller:
+                                with patch.object(monitor_web_new, "FreeDiscountNoticePoller"):
+                                    result = monitor_web_new.reload_runtime_service_config(wx)
 
         self.assertTrue(result)
         mocked_shutdown.assert_called_once_with(wait=False)
         old_scheduler.stop.assert_called_once_with()
+        old_poller.stop.assert_called_once_with()
         mocked_start.assert_called_once_with(
             wx=wx,
             who_list=["新群A", "新群B"],
             schedule_times=["11:01"],
             exact=True,
         )
+        mocked_start_poller.assert_called_once()
 
     def test_reload_runtime_service_config_keeps_current_state_on_bad_json(self):
         wx = MagicMock()
         old_scheduler = MagicMock()
+        old_poller = MagicMock()
 
         with patch.object(monitor_web_new, "BOOKING_POSTER_SCHEDULER", old_scheduler):
-            with patch.object(
-                monitor_web_new,
-                "load_service_config_strict",
-                side_effect=json.JSONDecodeError("bad", "{", 0),
-            ):
-                with patch.object(monitor_web_new, "shutdown_service_manager") as mocked_shutdown:
-                    result = monitor_web_new.reload_runtime_service_config(wx)
+            with patch.object(monitor_web_new, "FREE_DISCOUNT_NOTICE_POLLER", old_poller):
+                with patch.object(
+                    monitor_web_new,
+                    "load_service_config_strict",
+                    side_effect=json.JSONDecodeError("bad", "{", 0),
+                ):
+                    with patch.object(monitor_web_new, "shutdown_service_manager") as mocked_shutdown:
+                        result = monitor_web_new.reload_runtime_service_config(wx)
 
         self.assertFalse(result)
         mocked_shutdown.assert_not_called()
         old_scheduler.stop.assert_not_called()
+        old_poller.stop.assert_not_called()
 
     def test_runtime_config_reloader_reloads_when_config_mtime_changes(self):
         wx = MagicMock()

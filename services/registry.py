@@ -7,10 +7,28 @@ from typing import Any
 from zhipu_chat_demo import PROVIDER_ZHIPU
 
 from .config_loader import load_service_config
-from .jubensha_booking import JubenshaBookingService, JubenshaMySQLClient
+from .jubensha_booking import (
+    FreeDiscountNotifier,
+    JubenshaBookingService,
+    JubenshaMySQLClient,
+)
 from .manager import ServiceManager
 
 _service_manager: ServiceManager | None = None
+_wechat_client: Any | None = None
+
+
+def set_service_wechat_client(wx: Any | None) -> None:
+    """设置服务层可复用的微信客户端实例。
+
+    参数:
+    - wx: 启动入口初始化好的 WeChat 实例；传 None 表示清空。
+
+    返回值:
+    - 无返回值；后续创建服务管理器时会把该实例注入需要发送微信消息的服务。
+    """
+    global _wechat_client
+    _wechat_client = wx
 
 
 def get_service_manager() -> ServiceManager:
@@ -58,11 +76,15 @@ def _build_services() -> list[object]:
         )
         return []
 
+    chatroom_ids = _normalize_chatroom_ids(
+        jubensha_cfg.get("monitored_chatroom_ids", [])
+    )
     mysql_client = JubenshaMySQLClient(
         mysql_cfg,
         raw_table=jubensha_cfg.get("raw_table", "jubensha_all_content"),
         booking_table=jubensha_cfg.get("booking_table", "jubensha_booking"),
     )
+    free_discount_notifier = _build_free_discount_notifier(jubensha_cfg)
     print(
         "[services] jubensha_booking 已启用: "
         f"provider={jubensha_cfg.get('provider', PROVIDER_ZHIPU)}, "
@@ -76,13 +98,12 @@ def _build_services() -> list[object]:
         JubenshaBookingService(
             mysql_client=mysql_client,
             provider=jubensha_cfg.get("provider", PROVIDER_ZHIPU),
-            monitored_chatroom_ids=_normalize_chatroom_ids(
-                jubensha_cfg.get("monitored_chatroom_ids", [])
-            ),
+            monitored_chatroom_ids=chatroom_ids,
             trigger_keywords=tuple(jubensha_cfg.get("trigger_keywords", [])),
             allowed_time_range=_normalize_allowed_time_range(
                 jubensha_cfg.get("allowed_time_range", {})
             ),
+            free_discount_notifier=free_discount_notifier,
         )
     ]
 
@@ -105,6 +126,47 @@ def _normalize_chatroom_ids(raw_chatrooms: object) -> tuple[str, ...]:
             chatroom_ids.append(chatroom_id)
 
     return tuple(chatroom_ids)
+
+
+def _build_free_discount_notifier(jubensha_cfg: dict[str, Any]) -> FreeDiscountNotifier | None:
+    """按配置创建免单通知器。
+
+    参数:
+    - jubensha_cfg: `services.jubensha_booking` 配置对象。
+
+    返回值:
+    - 配置启用且 wx 已初始化时返回通知器；否则返回 None。
+    """
+    notifier_cfg = jubensha_cfg.get("free_discount_notifier", {})
+    if not isinstance(notifier_cfg, dict) or not notifier_cfg.get("enabled"):
+        return None
+    if _wechat_client is None:
+        print("[services][jubensha][free] 未启动: wx 未初始化", flush=True)
+        return None
+
+    return FreeDiscountNotifier(
+        wx=_wechat_client,
+        target_chats=_normalize_target_chats(notifier_cfg),
+        exact=bool(notifier_cfg.get("exact", False)),
+    )
+
+
+def _normalize_target_chats(raw_cfg: dict[str, Any]) -> tuple[str, ...]:
+    """规范化免单通知目标群聊配置。
+
+    参数:
+    - raw_cfg: 免单通知配置对象。
+
+    返回值:
+    - 返回去掉空值后的目标群聊名称元组；为空时通知器不会发送。
+    """
+    raw_targets = raw_cfg.get("target_chats")
+    if isinstance(raw_targets, list):
+        targets = [str(item).strip() for item in raw_targets if str(item).strip()]
+        if targets:
+            return tuple(targets)
+
+    return ()
 
 
 def _normalize_allowed_time_range(raw_range: object) -> tuple[str, str]:

@@ -1,5 +1,10 @@
 """剧本杀拼本服务导出。"""
 
+from .free_discount_notifier import FreeDiscountNotifier
+from .free_discount_notice_poller import (
+    FreeDiscountNoticePoller,
+    start_free_discount_notice_poller,
+)
 from .mysql_client import JubenshaMySQLClient
 from .poster_sender import (
     BookingPosterError,
@@ -23,6 +28,8 @@ __all__ = [
     "BookingPosterError",
     "BookingPosterScheduleError",
     "BookingPosterScheduler",
+    "FreeDiscountNotifier",
+    "FreeDiscountNoticePoller",
     "JubenshaBookingService",
     "JubenshaMySQLClient",
     "download_poster_image",
@@ -34,4 +41,5 @@ __all__ = [
     "send_booking_poster_to_chats",
     "send_poster_to_chat",
     "start_booking_poster_scheduler",
+    "start_free_discount_notice_poller",
 ]
