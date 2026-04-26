@@ -29,6 +29,10 @@ wxauto_logs/
 *.tmp
 *.temp
 
+# Chat export/transcription output files (contain private message data)
+*_export*.json
+*_transcribed*.json
+
 # Hook outputs
 hook_output.txt
 hook_start_output.txt
@@ -61,3 +65,8 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# Compiled binaries and output
+find_all_keys_macos
+decoded_voices/
+voice_transcriptions.json
