@@ -8,7 +8,7 @@ import time
 import datetime as dt
 from typing import Any
 
-from zhipu_chat_demo import PROVIDER_ZHIPU, JubenshaExtractionError, extract_jubensha
+from zhipu_chat_demo import PROVIDER_CODEX, JubenshaExtractionError, extract_jubensha
 
 from ..base import MessagePayload, MessageService
 from ..log_stream import emit_service_log
@@ -29,7 +29,8 @@ class JubenshaBookingService(MessageService):
         monitored_chatroom_ids: tuple[str, ...],
         trigger_keywords: tuple[str, ...],
         allowed_time_range: tuple[str, str],
-        provider: str = PROVIDER_ZHIPU,
+        provider: str = PROVIDER_CODEX,
+        ignored_sender_ids: tuple[str, ...] = (),
         free_discount_notifier: FreeDiscountNotifier | None = None,
     ) -> None:
         """初始化剧本杀拼本消息服务。
@@ -40,11 +41,13 @@ class JubenshaBookingService(MessageService):
         - trigger_keywords: 触发消息提取的关键词列表。
         - allowed_time_range: 每日允许处理的时间范围，格式为 `(start, end)`，值为 `HH:MM`。
         - provider: AI 提取服务提供商名称。
+        - ignored_sender_ids: 需要跳过的发送人微信内部 ID 列表。
         - free_discount_notifier: 免单新增记录通知器；不传时不发送微信群通知。
         """
         self._mysql_client = mysql_client
         self._provider = provider
         self._monitored_chatroom_ids = monitored_chatroom_ids
+        self._ignored_sender_ids = ignored_sender_ids
         self._trigger_keywords = trigger_keywords
         self._allowed_time_range = self._parse_allowed_time_range(allowed_time_range)
         self._free_discount_notifier = free_discount_notifier
@@ -90,6 +93,9 @@ class JubenshaBookingService(MessageService):
         sender_name, sender_wx_id = self._resolve_sender(message)
         if not sender_wx_id:
             self._record_stat("skip_no_sender")
+            return
+        if sender_wx_id in self._ignored_sender_ids:
+            self._record_stat("skip_ignored_sender")
             return
         sender_wechat_no = str(message.get("wechat_no") or "").strip()
         sender_wechat_no_label = sender_wechat_no or "不是好友"
@@ -168,7 +174,11 @@ class JubenshaBookingService(MessageService):
                 data=booking_item,
             )
             if self._should_notify_free_discount(upsert_result):
-                self._notify_free_discount(trace_id, booking_item)
+                self._notify_free_discount(
+                    trace_id,
+                    booking_item,
+                    source_chatroom_id=chatroom_id,
+                )
 
         self._log(trace_id, "处理完成")
 
@@ -191,12 +201,15 @@ class JubenshaBookingService(MessageService):
         self,
         trace_id: str,
         booking_item: dict[str, str],
+        *,
+        source_chatroom_id: str,
     ) -> None:
         """向免单通知器投递新增拼本记录。
 
         参数:
         - trace_id: 当前消息处理链路 ID，用于输出日志。
         - booking_item: 已成功新增入库的拼本业务数据。
+        - source_chatroom_id: 触发该拼本入库的微信群 ID，用于免单来源群白名单判断。
 
         返回值:
         - 无返回值；通知失败时记录错误日志，避免影响主入库流程。
@@ -205,7 +218,10 @@ class JubenshaBookingService(MessageService):
             return
 
         try:
-            self._free_discount_notifier.notify_if_needed(booking_item)
+            self._free_discount_notifier.notify_if_needed(
+                booking_item,
+                source_chatroom_id=source_chatroom_id,
+            )
         except Exception as exc:  # noqa: BLE001
             self._log(trace_id, f"免单通知发送失败: {exc}", kind="error")
 
@@ -293,6 +309,7 @@ class JubenshaBookingService(MessageService):
             "skip_no_keyword": 0,
             "skip_outside_allowed_time": 0,
             "skip_no_sender": 0,
+            "skip_ignored_sender": 0,
             "dedup_raw": 0,
             "raw_inserted": 0,
             "ai_succeeded": 0,
@@ -330,6 +347,7 @@ class JubenshaBookingService(MessageService):
             "跳过无关键词": self._stats["skip_no_keyword"],
             "跳过非业务时段": self._stats["skip_outside_allowed_time"],
             "跳过无发送人": self._stats["skip_no_sender"],
+            "跳过忽略发送人": self._stats["skip_ignored_sender"],
             "原始去重命中": self._stats["dedup_raw"],
             "原始新增": self._stats["raw_inserted"],
             "AI成功": self._stats["ai_succeeded"],
@@ -346,6 +364,7 @@ class JubenshaBookingService(MessageService):
             f"跳过无关键词={summary_data['跳过无关键词']} "
             f"跳过非业务时段={summary_data['跳过非业务时段']} "
             f"跳过无发送人={summary_data['跳过无发送人']} "
+            f"跳过忽略发送人={summary_data['跳过忽略发送人']} "
             f"原始去重命中={summary_data['原始去重命中']} "
             f"原始新增={summary_data['原始新增']} "
             f"AI成功={summary_data['AI成功']} "

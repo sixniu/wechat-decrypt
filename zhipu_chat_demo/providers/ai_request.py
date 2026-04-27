@@ -6,7 +6,8 @@
 
 from __future__ import annotations
 
-from ..config.providers import PROVIDER_QWEN, PROVIDER_ZHIPU
+from ..config.providers import PROVIDER_CODEX, PROVIDER_QWEN, PROVIDER_ZHIPU
+from .codex import CodexRequestError, request_by_type as request_codex_by_type
 from .qwen import QwenRequestError, request_by_type as request_qwen_by_type
 from .zhipu import ZhipuRequestError, request_by_type as request_zhipu_by_type
 
@@ -21,7 +22,7 @@ def request_by_type(text: str, type: str, provider: str = PROVIDER_ZHIPU) -> str
     参数：
         text: 需要发送给模型的原始文本。
         type: 业务类型，例如 ``jubensha``。
-        provider: AI 提供方标识。目前支持 ``zhipu`` 和 ``qwen``。
+        provider: AI 提供方标识。目前支持 ``zhipu``、``qwen`` 和 ``codex``。
 
     返回：
         str: 模型返回的原始文本，预期应为 JSON 字符串。
@@ -41,6 +42,12 @@ def request_by_type(text: str, type: str, provider: str = PROVIDER_ZHIPU) -> str
         except QwenRequestError as exc:
             raise AIRequestError(str(exc)) from exc
 
+    if provider == PROVIDER_CODEX:
+        try:
+            return request_codex_by_type(text, type)
+        except CodexRequestError as exc:
+            raise AIRequestError(str(exc)) from exc
+
     raise AIRequestError(
-        f"未知 AI 提供方: {provider}。当前支持: {PROVIDER_ZHIPU}, {PROVIDER_QWEN}"
+        f"未知 AI 提供方: {provider}。当前支持: {PROVIDER_ZHIPU}, {PROVIDER_QWEN}, {PROVIDER_CODEX}"
     )

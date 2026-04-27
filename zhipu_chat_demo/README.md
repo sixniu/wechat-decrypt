@@ -6,6 +6,8 @@
   统一入口，外部可以选择调用哪一个 AI 提供方
 - `providers/zhipu.py` / `providers/qwen.py`
   分别负责各自 AI 提供方的具体请求实现
+- `providers/codex.py`
+  负责本地 Codex OpenAI 兼容接口的请求实现
 - `tasks/jubensha.py`
   只负责处理剧本杀返回值，判断是不是合法 JSON，并组装成最终结果
 
@@ -19,6 +21,7 @@
 - `tasks/jubensha_constants.py`: 剧本杀结果字段名、枚举值等公共常量
 - `providers/zhipu.py`: 智谱访问层
 - `providers/qwen.py`: 千问访问层
+- `providers/codex.py`: 本地 Codex 访问层
 - `providers/ai_request.py`: 统一 AI 请求入口，对外开放 `request_by_type(text, type, provider)`
 - `tasks/jubensha.py`: 剧本杀处理层，对外开放 `extract_jubensha(text, provider=...)`
 
@@ -80,9 +83,10 @@ python -m zhipu_chat_demo.demo_jubensha_request
 - 模型名、接口地址和内置 key 已配置在 `config/providers.py`
 - 千问支持百炼官方兼容 OpenAI SDK 的调用方式
 - 千问和智谱一样，直接读取 `config/providers.py` 里的内置 key
-- 现在支持两种 AI 提供方：
+- 现在支持三种 AI 提供方：
   - `zhipu`
   - `qwen`
+  - `codex`
 - 目前只内置了 `jubensha` 这一种类型
 - 后面如果增加新类型，建议新增一个 `prompts/xxx_prompt.py` 和一个 `xxx.py`
 - 当前目录已经按最新结构使用，不保留旧兼容入口

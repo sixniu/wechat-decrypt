@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from zhipu_chat_demo import PROVIDER_ZHIPU
+from zhipu_chat_demo import PROVIDER_CODEX
 
 from .config_loader import load_service_config
 from .jubensha_booking import (
@@ -79,6 +79,9 @@ def _build_services() -> list[object]:
     chatroom_ids = _normalize_chatroom_ids(
         jubensha_cfg.get("monitored_chatroom_ids", [])
     )
+    ignored_sender_ids = _normalize_sender_ids(
+        jubensha_cfg.get("ignored_sender_ids", [])
+    )
     mysql_client = JubenshaMySQLClient(
         mysql_cfg,
         raw_table=jubensha_cfg.get("raw_table", "jubensha_all_content"),
@@ -87,18 +90,20 @@ def _build_services() -> list[object]:
     free_discount_notifier = _build_free_discount_notifier(jubensha_cfg)
     print(
         "[services] jubensha_booking 已启用: "
-        f"provider={jubensha_cfg.get('provider', PROVIDER_ZHIPU)}, "
+        f"provider={jubensha_cfg.get('provider', PROVIDER_CODEX)}, "
         f"raw_table={jubensha_cfg.get('raw_table', 'jubensha_all_content')}, "
         f"booking_table={jubensha_cfg.get('booking_table', 'jubensha_booking')}, "
         f"monitored_chatrooms={len(jubensha_cfg.get('monitored_chatroom_ids', []))}, "
+        f"ignored_senders={len(ignored_sender_ids)}, "
         f"trigger_keywords={len(jubensha_cfg.get('trigger_keywords', []))}",
         flush=True,
     )
     return [
         JubenshaBookingService(
             mysql_client=mysql_client,
-            provider=jubensha_cfg.get("provider", PROVIDER_ZHIPU),
+            provider=jubensha_cfg.get("provider", PROVIDER_CODEX),
             monitored_chatroom_ids=chatroom_ids,
+            ignored_sender_ids=ignored_sender_ids,
             trigger_keywords=tuple(jubensha_cfg.get("trigger_keywords", [])),
             allowed_time_range=_normalize_allowed_time_range(
                 jubensha_cfg.get("allowed_time_range", {})
@@ -128,6 +133,26 @@ def _normalize_chatroom_ids(raw_chatrooms: object) -> tuple[str, ...]:
     return tuple(chatroom_ids)
 
 
+def _normalize_sender_ids(raw_senders: object) -> tuple[str, ...]:
+    """兼容字符串列表和带 name 的发送人对象列表。"""
+    sender_ids: list[str] = []
+    if not isinstance(raw_senders, list):
+        return ()
+
+    for item in raw_senders:
+        if isinstance(item, str):
+            sender_id = item.strip()
+        elif isinstance(item, dict):
+            sender_id = str(item.get("id") or "").strip()
+        else:
+            sender_id = ""
+
+        if sender_id:
+            sender_ids.append(sender_id)
+
+    return tuple(sender_ids)
+
+
 def _build_free_discount_notifier(jubensha_cfg: dict[str, Any]) -> FreeDiscountNotifier | None:
     """按配置创建免单通知器。
 
@@ -147,6 +172,9 @@ def _build_free_discount_notifier(jubensha_cfg: dict[str, Any]) -> FreeDiscountN
     return FreeDiscountNotifier(
         wx=_wechat_client,
         target_chats=_normalize_target_chats(notifier_cfg),
+        source_chatroom_ids=_normalize_chatroom_ids(
+            notifier_cfg.get("source_chatrooms", [])
+        ),
         exact=bool(notifier_cfg.get("exact", False)),
     )
 
@@ -158,15 +186,26 @@ def _normalize_target_chats(raw_cfg: dict[str, Any]) -> tuple[str, ...]:
     - raw_cfg: 免单通知配置对象。
 
     返回值:
-    - 返回去掉空值后的目标群聊名称元组；为空时通知器不会发送。
+    - 返回去掉空值后的目标群聊名称元组；对象列表会读取 name 字段，字符串列表保持兼容。
     """
     raw_targets = raw_cfg.get("target_chats")
-    if isinstance(raw_targets, list):
-        targets = [str(item).strip() for item in raw_targets if str(item).strip()]
-        if targets:
-            return tuple(targets)
+    if not isinstance(raw_targets, list):
+        return ()
 
-    return ()
+    targets: list[str] = []
+    for item in raw_targets:
+        if isinstance(item, str):
+            target = item.strip()
+        elif isinstance(item, dict):
+            # wxautox4 的 who 参数当前使用群名搜索，id 仅作为配置中的可读标识保留。
+            target = str(item.get("name") or "").strip()
+        else:
+            target = ""
+
+        if target:
+            targets.append(target)
+
+    return tuple(targets)
 
 
 def _normalize_allowed_time_range(raw_range: object) -> tuple[str, str]:

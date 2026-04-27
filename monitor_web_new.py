@@ -250,12 +250,32 @@ def _get_config_mtime(config_path):
 
 
 def _normalize_target_chats(poster_cfg):
-    """规范化预约海报发送目标群聊配置。"""
-    target_chats = poster_cfg.get("target_chats")
-    if isinstance(target_chats, list):
-        return [str(item).strip() for item in target_chats if str(item).strip()]
+    """规范化微信发送目标群聊配置。
 
-    return []
+    参数:
+    - poster_cfg: 包含 target_chats 的配置对象，可能来自海报发送或免单通知轮询。
+
+    返回值:
+    - 返回用于 wxautox4 who 参数的群名列表；对象格式读取 name，字符串格式保持兼容。
+    """
+    target_chats = poster_cfg.get("target_chats")
+    if not isinstance(target_chats, list):
+        return []
+
+    targets = []
+    for item in target_chats:
+        if isinstance(item, str):
+            target = item.strip()
+        elif isinstance(item, dict):
+            # wxautox4 的发送目标仍使用群名，id 只用于配置可读性和人工核对。
+            target = str(item.get("name") or "").strip()
+        else:
+            target = ""
+
+        if target:
+            targets.append(target)
+
+    return targets
 
 # ---- Emoji 缓存 (md5 → {cdn_url, aes_key, encrypt_url}) ----
 _emoji_lookup = {}       # md5 → dict

@@ -1,117 +1,126 @@
 {
-    "_comment": "services 目录专用配置。JSON 不支持 // 注释，所以用 _xxx_comment 字段说明每个配置项。",
-    "mysql": {
-        "_comment": "MySQL 数据库连接配置，用于剧本杀拼本消息入库。",
-        "host": "127.0.0.1",
-        "_host_comment": "MySQL 主机地址，例如 127.0.0.1 或云数据库 IP。",
-        "port": 3306,
-        "_port_comment": "MySQL 端口，默认 3306。",
-        "user": "root",
-        "_user_comment": "MySQL 用户名。",
-        "password": "your-password",
-        "_password_comment": "MySQL 密码。",
-        "database": "your-database",
-        "_database_comment": "MySQL 数据库名。",
-        "charset": "utf8mb4",
-        "_charset_comment": "数据库字符集，建议 utf8mb4，支持中文和 emoji。"
-    },
-    "services": {
-        "_comment": "各业务服务配置。",
-        "jubensha_booking": {
-            "_comment": "剧本杀拼本服务配置，包含消息入库和预约海报定时发送。",
-            "enabled": false,
-            "_enabled_comment": "是否启用剧本杀拼本消息处理服务。true=启用，false=关闭。",
-            "provider": "zhipu",
-            "_provider_comment": "AI 提取服务提供商，目前默认 zhipu。",
-            "monitored_chatroom_ids": [
-                {
-                    "id": "18614995060@chatroom",
-                    "name": "境由心造"
-                },
-                {
-                    "id": "58262692214@chatroom",
-                    "name": "拼好本"
-                },
-                {
-                    "id": "46000926626@chatroom",
-                    "name": "剧本杀31群"
-                },
-                {
-                    "id": "47388405090@chatroom",
-                    "name": "剧本杀15群"
-                }
-            ],
-            "_monitored_chatroom_ids_comment": "需要监听的微信群列表。id 是微信 chatroom ID，name 是给人看的群名备注；只有这些群里的消息才会进入剧本杀拼本处理。",
-            "trigger_keywords": [
-                "🥤",
-                "补贴",
-                "🈳",
-                "🆘",
-                "🉑️",
-                "🚗",
-                "免单",
-                "上车",
-                "极限",
-                "❗"
-            ],
-            "_trigger_keywords_comment": "触发剧本杀拼本处理的关键词列表。文本消息包含任意一个关键词就会处理。",
-            "allowed_time_range": {
-                "start": "09:30",
-                "_start_comment": "剧本杀拼本消息允许处理的开始时间，24 小时制 HH:MM。",
-                "end": "20:00",
-                "_end_comment": "剧本杀拼本消息允许处理的结束时间，24 小时制 HH:MM。"
-            },
-            "_allowed_time_range_comment": "剧本杀拼本消息每日允许处理的时间范围；只有落在这个时间窗内的消息才会进入提取。",
-            "raw_table": "jubensha_all_content",
-            "_raw_table_comment": "保存原始群聊文本消息的 MySQL 表名。",
-            "booking_table": "jubensha_booking",
-            "_booking_table_comment": "保存结构化拼本预约数据的 MySQL 表名。",
-            "poster_sender": {
-                "_comment": "剧本杀预约海报定时发送配置。JSON 不支持 // 注释，所以这里用 _comment 字段说明含义。",
-                "enabled": false,
-                "_enabled_comment": "是否启用定时发送预约海报。true=启用，false=关闭。",
-                "target_chats": [
-                    "境由心造",
-                    "拼好本"
-                ],
-                "_target_chats_comment": "发送目标群聊名称列表，会依次传给 wx.SendFiles 的 who 参数。",
-                "exact": false,
-                "_exact_comment": "搜索群聊时是否精确匹配。true=必须完全等于群名，false=允许模糊匹配。",
-                "times": [
-                    "10:01",
-                    "14:01",
-                    "20:01"
-                ],
-                "_times_comment": "每天发送时间，24 小时制 HH:MM。示例：10:01 表示上午 10 点 01 分。"
-            },
-            "free_discount_notifier": {
-                "_comment": "免单拼本新增后 @所有人 通知配置。target_chats 为空时不发送。",
-                "enabled": false,
-                "_enabled_comment": "是否启用免单新增通知。true=启用，false=关闭。",
-                "target_chats": [],
-                "_target_chats_comment": "固定通知目标群聊名称列表；为空时不发送免单通知。",
-                "exact": false,
-                "_exact_comment": "搜索群聊时是否精确匹配。true=必须完全等于群名，false=允许模糊匹配。"
-            },
-            "free_discount_notice_poller": {
-                "_comment": "从服务器轮询免单拼本通知任务。本地微信可用时启用，target_chats 为空时不启动。",
-                "enabled": false,
-                "_enabled_comment": "是否启用服务器免单通知任务轮询。true=启用，false=关闭。",
-                "api_base_url": "https://www.shisan.ink/api/booking/free-notices",
-                "_api_base_url_comment": "script-kill-api 的免单通知内部接口基础地址。",
-                "token": "your-internal-token",
-                "_token_comment": "内部接口 token，需要和服务器 FREE_DISCOUNT_NOTICE_TOKEN 保持一致。",
-                "interval_seconds": 10,
-                "_interval_seconds_comment": "轮询间隔秒数。空列表响应很小，建议 5-15 秒。",
-                "limit": 10,
-                "_limit_comment": "每次最多领取的免单通知任务数量。",
-                "timeout": 10,
-                "_timeout_comment": "单次 HTTP 请求超时时间，单位秒。",
-                "target_chats": [],
-                "_target_chats_comment": "固定通知目标群聊名称列表；为空时不启动轮询，也不会发送。",
-                "exact": false,
-                "_exact_comment": "搜索群聊时是否精确匹配。true=必须完全等于群名，false=允许模糊匹配。"
-            }
+  "_comment": "services 目录专用配置。JSON 不支持 // 注释，所以用 _xxx_comment 字段说明每个配置项。",
+  "mysql": {
+    "_comment": "MySQL 数据库连接配置，用于剧本杀拼本消息入库。",
+    "host": "127.0.0.1",
+    "_host_comment": "MySQL 主机地址，例如 127.0.0.1 或云数据库 IP。",
+    "port": 3306,
+    "_port_comment": "MySQL 端口，默认 3306。",
+    "user": "root",
+    "_user_comment": "MySQL 用户名。",
+    "password": "your-password",
+    "_password_comment": "MySQL 密码。",
+    "database": "your-database",
+    "_database_comment": "MySQL 数据库名。",
+    "charset": "utf8mb4",
+    "_charset_comment": "数据库字符集，建议 utf8mb4，支持中文和 emoji。"
+  },
+  "services": {
+    "_comment": "各业务服务配置。",
+    "jubensha_booking": {
+      "_comment": "剧本杀拼本服务配置，包含消息入库和预约海报定时发送。",
+      "enabled": false,
+      "_enabled_comment": "是否启用剧本杀拼本消息处理服务。true=启用，false=关闭。",
+      "provider": "codex",
+      "_provider_comment": "AI 提取服务提供商，目前默认 codex。",
+      "monitored_chatroom_ids": [
+        {
+          "id": "18614995060@chatroom",
+          "name": "境由心造"
+        },
+        {
+          "id": "58262692214@chatroom",
+          "name": "拼好本"
+        },
+        {
+          "id": "46000926626@chatroom",
+          "name": "剧本杀31群"
+        },
+        {
+          "id": "47388405090@chatroom",
+          "name": "剧本杀15群"
         }
+      ],
+      "_monitored_chatroom_ids_comment": "需要监听的微信群列表。id 是微信 chatroom ID，name 是给人看的群名备注；只有这些群里的消息才会进入剧本杀拼本处理。",
+      "ignored_sender_ids": [
+        {
+          "id": "wxid_s1rc1q8dj19h22",
+          "name": "自己"
+        }
+      ],
+      "_ignored_sender_ids_comment": "需要忽略的发送人微信内部 ID 列表。id 是 sender_id，name 是给人看的备注；这些发送人的消息不会写入原始表，也不会请求 AI 提取。",
+      "trigger_keywords": [
+        "🥤",
+        "补贴",
+        "🈳",
+        "🆘",
+        "🉑️",
+        "🚗",
+        "免单",
+        "上车",
+        "极限",
+        "❗"
+      ],
+      "_trigger_keywords_comment": "触发剧本杀拼本处理的关键词列表。文本消息包含任意一个关键词就会处理。",
+      "allowed_time_range": {
+        "start": "09:30",
+        "_start_comment": "剧本杀拼本消息允许处理的开始时间，24 小时制 HH:MM。",
+        "end": "20:00",
+        "_end_comment": "剧本杀拼本消息允许处理的结束时间，24 小时制 HH:MM。"
+      },
+      "_allowed_time_range_comment": "剧本杀拼本消息每日允许处理的时间范围；只有落在这个时间窗内的消息才会进入提取。",
+      "raw_table": "jubensha_all_content",
+      "_raw_table_comment": "保存原始群聊文本消息的 MySQL 表名。",
+      "booking_table": "jubensha_booking",
+      "_booking_table_comment": "保存结构化拼本预约数据的 MySQL 表名。",
+      "poster_sender": {
+        "_comment": "剧本杀预约海报定时发送配置。JSON 不支持 // 注释，所以这里用 _comment 字段说明含义。",
+        "enabled": false,
+        "_enabled_comment": "是否启用定时发送预约海报。true=启用，false=关闭。",
+        "target_chats": [
+          "境由心造",
+          "拼好本"
+        ],
+        "_target_chats_comment": "发送目标群聊列表；推荐使用 {id, name} 对象格式，发送时使用 name，id 仅用于人工核对。",
+        "exact": false,
+        "_exact_comment": "搜索群聊时是否精确匹配。true=必须完全等于群名，false=允许模糊匹配。",
+        "times": [
+          "10:01",
+          "14:01",
+          "20:01"
+        ],
+        "_times_comment": "每天发送时间，24 小时制 HH:MM。示例：10:01 表示上午 10 点 01 分。"
+      },
+      "free_discount_notifier": {
+        "_comment": "免单拼本新增后 @所有人 通知配置。target_chats 为空时不发送；source_chatrooms 为空时不限制来源群。",
+        "enabled": false,
+        "_enabled_comment": "是否启用免单新增通知。true=启用，false=关闭。",
+        "target_chats": [],
+        "_target_chats_comment": "固定通知目标群聊列表；推荐使用 {id, name} 对象格式，发送时使用 name，id 仅用于人工核对；为空时不发送免单通知。",
+        "source_chatrooms": [],
+        "_source_chatrooms_comment": "允许触发免单 @所有人的来源微信群列表。id 是微信 chatroom ID，name 是给人看的群名备注；为空时所有已监听群的免单都可触发。",
+        "exact": false,
+        "_exact_comment": "搜索群聊时是否精确匹配。true=必须完全等于群名，false=允许模糊匹配。"
+      },
+      "free_discount_notice_poller": {
+        "_comment": "从服务器轮询免单拼本通知任务。本地微信可用时启用，target_chats 为空时不启动。",
+        "enabled": false,
+        "_enabled_comment": "是否启用服务器免单通知任务轮询。true=启用，false=关闭。",
+        "api_base_url": "https://www.shisan.ink/api/booking/free-notices",
+        "_api_base_url_comment": "script-kill-api 的免单通知内部接口基础地址。",
+        "token": "your-internal-token",
+        "_token_comment": "内部接口 token，需要和服务器 FREE_DISCOUNT_NOTICE_TOKEN 保持一致。",
+        "interval_seconds": 10,
+        "_interval_seconds_comment": "轮询间隔秒数。空列表响应很小，建议 5-15 秒。",
+        "limit": 10,
+        "_limit_comment": "每次最多领取的免单通知任务数量。",
+        "timeout": 10,
+        "_timeout_comment": "单次 HTTP 请求超时时间，单位秒。",
+        "target_chats": [],
+        "_target_chats_comment": "固定通知目标群聊列表；推荐使用 {id, name} 对象格式，发送时使用 name，id 仅用于人工核对；为空时不启动轮询，也不会发送。",
+        "exact": false,
+        "_exact_comment": "搜索群聊时是否精确匹配。true=必须完全等于群名，false=允许模糊匹配。"
+      }
     }
+  }
 }

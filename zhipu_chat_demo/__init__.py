@@ -4,9 +4,15 @@
 直接从这个包导入即可。
 """
 
-from .config.providers import PROVIDER_QWEN, PROVIDER_ZHIPU
+from .config.providers import PROVIDER_CODEX, PROVIDER_QWEN, PROVIDER_ZHIPU
 from .prompts import TASK_JUBENSHA
-from .providers import AIRequestError, QwenRequestError, ZhipuRequestError, request_by_type
+from .providers import (
+    AIRequestError,
+    CodexRequestError,
+    QwenRequestError,
+    ZhipuRequestError,
+    request_by_type,
+)
 from .tasks import (
     JUBENSHA_DISCOUNT_TYPES,
     JUBENSHA_RESULT_KEYS,
@@ -16,8 +22,10 @@ from .tasks import (
 
 __all__ = [
     "AIRequestError",
+    "CodexRequestError",
     "JUBENSHA_DISCOUNT_TYPES",
     "JUBENSHA_RESULT_KEYS",
+    "PROVIDER_CODEX",
     "PROVIDER_QWEN",
     "PROVIDER_ZHIPU",
     "TASK_JUBENSHA",

@@ -26,6 +26,7 @@ class FreeDiscountNotifier:
         *,
         wx: Any,
         target_chats: tuple[str, ...] = (),
+        source_chatroom_ids: tuple[str, ...] = (),
         exact: bool = False,
     ) -> None:
         """初始化免单通知器。
@@ -33,6 +34,7 @@ class FreeDiscountNotifier:
         参数:
         - wx: 已初始化的 WeChat 实例，由监听入口创建后传入。
         - target_chats: 固定通知目标群聊；为空时不发送。
+        - source_chatroom_ids: 允许触发免单通知的来源群 ID；为空时不限制来源群。
         - exact: 调用 wxautox4 搜索群聊时是否精确匹配。
 
         返回值:
@@ -40,16 +42,20 @@ class FreeDiscountNotifier:
         """
         self._wx = wx
         self._target_chats = target_chats
+        self._source_chatroom_ids = source_chatroom_ids
         self._exact = exact
 
     def notify_if_needed(
         self,
         booking_item: dict[str, Any],
+        *,
+        source_chatroom_id: str = "",
     ) -> None:
         """在拼本记录为免单时发送 @所有人 通知。
 
         参数:
         - booking_item: 已成功新增入库的拼本业务数据。
+        - source_chatroom_id: 触发该拼本入库的微信群 ID；配置来源白名单时用于判断是否发送。
 
         返回值:
         - 无返回值；满足条件时会向微信群发送 @所有人 通知。
@@ -60,6 +66,9 @@ class FreeDiscountNotifier:
         if str(booking_item.get("discount_type") or "").strip() != "免单":
             return
 
+        if not self._is_source_chatroom_allowed(source_chatroom_id):
+            return
+
         targets = self._resolve_targets()
         if not targets:
             return
@@ -68,6 +77,20 @@ class FreeDiscountNotifier:
         for target in targets:
             # 这里会触发真实微信群 @所有人 通知，调用前已限定为新增免单记录。
             at_all(wx=self._wx, msg=message, who=target, exact=self._exact)
+
+    def _is_source_chatroom_allowed(self, source_chatroom_id: str) -> bool:
+        """判断来源群是否允许触发免单通知。
+
+        参数:
+        - source_chatroom_id: 触发本次拼本入库的微信群 ID。
+
+        返回值:
+        - 未配置来源群白名单时返回 True；配置后仅 ID 命中时返回 True。
+        """
+        if not self._source_chatroom_ids:
+            return True
+
+        return str(source_chatroom_id or "").strip() in self._source_chatroom_ids
 
     def _resolve_targets(self) -> tuple[str, ...]:
         """解析本次通知要发送到哪些群聊。

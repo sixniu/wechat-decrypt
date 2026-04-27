@@ -33,8 +33,8 @@ DEFAULT_SERVICE_CONFIG: dict[str, Any] = {
             "_comment": "剧本杀拼本服务配置，包含消息入库和预约海报定时发送。",
             "enabled": False,
             "_enabled_comment": "是否启用剧本杀拼本消息处理服务。true=启用，false=关闭。",
-            "provider": "zhipu",
-            "_provider_comment": "AI 提取服务提供商，目前默认 zhipu。",
+            "provider": "codex",
+            "_provider_comment": "AI 提取服务提供商，目前默认 codex。",
             "monitored_chatroom_ids": [
                 {"id": "18614995060@chatroom", "name": "境由心造"},
                 {"id": "58262692214@chatroom", "name": "拼好本"},
@@ -44,6 +44,13 @@ DEFAULT_SERVICE_CONFIG: dict[str, Any] = {
             "_monitored_chatroom_ids_comment": (
                 "需要监听的微信群列表。id 是微信 chatroom ID，name 是给人看的群名备注；"
                 "只有这些群里的消息才会进入剧本杀拼本处理。"
+            ),
+            "ignored_sender_ids": [
+                {"id": "wxid_s1rc1q8dj19h22", "name": "自己"},
+            ],
+            "_ignored_sender_ids_comment": (
+                "需要忽略的发送人微信内部 ID 列表。id 是 sender_id，name 是给人看的备注；"
+                "这些发送人的消息不会写入原始表，也不会请求 AI 提取。"
             ),
             "trigger_keywords": [
                 "🥤",
@@ -78,18 +85,29 @@ DEFAULT_SERVICE_CONFIG: dict[str, Any] = {
                 "enabled": False,
                 "_enabled_comment": "是否启用定时发送预约海报。true=启用，false=关闭。",
                 "target_chats": ["境由心造"],
-                "_target_chats_comment": "发送目标群聊名称列表，会依次传给 wx.SendFiles 的 who 参数。",
+                "_target_chats_comment": (
+                    "发送目标群聊列表；推荐使用 {id, name} 对象格式，"
+                    "发送时使用 name，id 仅用于人工核对。"
+                ),
                 "exact": False,
                 "_exact_comment": "搜索群聊时是否精确匹配。true=必须完全等于群名，false=允许模糊匹配。",
                 "times": ["10:01", "14:01", "20:01"],
                 "_times_comment": "每天发送时间，24 小时制 HH:MM。示例：10:01 表示上午 10 点 01 分。",
             },
             "free_discount_notifier": {
-                "_comment": "免单拼本新增后 @所有人 通知配置。target_chats 为空时不发送。",
+                "_comment": "免单拼本新增后 @所有人 通知配置。target_chats 为空时不发送；source_chatrooms 为空时不限制来源群。",
                 "enabled": False,
                 "_enabled_comment": "是否启用免单新增通知。true=启用，false=关闭。",
                 "target_chats": [],
-                "_target_chats_comment": "固定通知目标群聊名称列表；为空时不发送免单通知。",
+                "_target_chats_comment": (
+                    "固定通知目标群聊列表；推荐使用 {id, name} 对象格式，"
+                    "发送时使用 name，id 仅用于人工核对；为空时不发送免单通知。"
+                ),
+                "source_chatrooms": [],
+                "_source_chatrooms_comment": (
+                    "允许触发免单 @所有人的来源微信群列表。id 是微信 chatroom ID，"
+                    "name 是给人看的群名备注；为空时所有已监听群的免单都可触发。"
+                ),
                 "exact": False,
                 "_exact_comment": "搜索群聊时是否精确匹配。true=必须完全等于群名，false=允许模糊匹配。",
             },
@@ -108,7 +126,10 @@ DEFAULT_SERVICE_CONFIG: dict[str, Any] = {
                 "timeout": 10,
                 "_timeout_comment": "单次 HTTP 请求超时时间，单位秒。",
                 "target_chats": [],
-                "_target_chats_comment": "固定通知目标群聊名称列表；为空时不启动轮询，也不会发送。",
+                "_target_chats_comment": (
+                    "固定通知目标群聊列表；推荐使用 {id, name} 对象格式，"
+                    "发送时使用 name，id 仅用于人工核对；为空时不启动轮询，也不会发送。"
+                ),
                 "exact": False,
                 "_exact_comment": "搜索群聊时是否精确匹配。true=必须完全等于群名，false=允许模糊匹配。",
             },

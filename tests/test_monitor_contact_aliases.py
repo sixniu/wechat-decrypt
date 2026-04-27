@@ -124,7 +124,12 @@ class MonitorBookingPosterSchedulerTests(unittest.TestCase):
                         "interval_seconds": 10,
                         "limit": 5,
                         "timeout": 3,
-                        "target_chats": ["境由心造"],
+                        "target_chats": [
+                            {
+                                "id": "18614995060@chatroom",
+                                "name": "境由心造",
+                            }
+                        ],
                         "exact": True,
                     }
                 }

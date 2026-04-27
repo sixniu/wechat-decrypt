@@ -20,6 +20,7 @@ def build_service(mysql_client, **kwargs):
         ),
         trigger_keywords=kwargs.get("trigger_keywords", TEST_TRIGGER_KEYWORDS),
         allowed_time_range=kwargs.get("allowed_time_range", ("09:30", "20:00")),
+        ignored_sender_ids=kwargs.get("ignored_sender_ids", ()),
         free_discount_notifier=kwargs.get("free_discount_notifier"),
     )
 
@@ -94,6 +95,28 @@ class JubenshaBookingServiceTests(unittest.TestCase):
 
         mysql_client.reserve_raw_message.assert_not_called()
         mocked_print.assert_not_called()
+
+    def test_service_skips_ignored_sender_ids_before_raw_insert_and_ai(self):
+        mysql_client = MagicMock()
+        service = build_service(
+            mysql_client,
+            ignored_sender_ids=("wxid_s1rc1q8dj19h22",),
+        )
+
+        with patch("services.jubensha_booking.service.extract_jubensha") as mocked_extract:
+            service.handle_message(
+                {
+                    "type": "文本",
+                    "content": "7.23玩聚如故=原价上车",
+                    "is_group": True,
+                    "chat_id": "18614995060@chatroom",
+                    "sender": "十三",
+                    "sender_id": "wxid_s1rc1q8dj19h22",
+                }
+            )
+
+        mysql_client.reserve_raw_message.assert_not_called()
+        mocked_extract.assert_not_called()
 
     def test_service_uses_configured_chatrooms_and_keywords(self):
         mysql_client = MagicMock()
@@ -246,7 +269,10 @@ class JubenshaBookingServiceTests(unittest.TestCase):
             )
 
         booking_item = mysql_client.upsert_booking.call_args.args[0]
-        notifier.notify_if_needed.assert_called_once_with(booking_item)
+        notifier.notify_if_needed.assert_called_once_with(
+            booking_item,
+            source_chatroom_id="18614995060@chatroom",
+        )
 
     def test_service_does_not_notify_when_free_discount_booking_is_only_updated(self):
         mysql_client = MagicMock()

@@ -3,13 +3,17 @@ import json
 import unittest
 from unittest.mock import patch
 
-from zhipu_chat_demo.providers import ai_request, qwen, zhipu
+from zhipu_chat_demo.providers import ai_request, codex, qwen, zhipu
 from zhipu_chat_demo.tasks import jubensha
 from zhipu_chat_demo.tasks.jubensha_constants import (
     JUBENSHA_DISCOUNT_TYPES,
     JUBENSHA_RESULT_KEYS,
 )
 from zhipu_chat_demo.config.providers import (
+    CODEX_API_KEY,
+    CODEX_BASE_URL,
+    CODEX_MODEL,
+    PROVIDER_CODEX,
     PROVIDER_QWEN,
     PROVIDER_ZHIPU,
     QWEN_API_KEY,
@@ -248,6 +252,13 @@ class AIRequestLayerTests(unittest.TestCase):
         mocked.assert_called_once_with("文本", TASK_JUBENSHA)
         self.assertEqual(result, "[]")
 
+    def test_request_by_type_routes_to_codex(self):
+        with patch.object(ai_request, "request_codex_by_type", return_value="[]") as mocked:
+            result = ai_request.request_by_type("文本", TASK_JUBENSHA, provider=PROVIDER_CODEX)
+
+        mocked.assert_called_once_with("文本", TASK_JUBENSHA)
+        self.assertEqual(result, "[]")
+
     def test_request_by_type_rejects_unknown_provider(self):
         with self.assertRaisesRegex(ai_request.AIRequestError, "未知 AI 提供方"):
             ai_request.request_by_type("文本", TASK_JUBENSHA, provider="unknown")
@@ -319,6 +330,74 @@ class QwenLayerTests(unittest.TestCase):
 
         self.assertEqual(content, "[]")
         self.assertEqual(calls[0]["model"], QWEN_MODEL)
+
+
+class CodexLayerTests(unittest.TestCase):
+    def test_codex_requires_api_key(self):
+        with patch.object(codex, "CODEX_API_KEY", ""):
+            with self.assertRaisesRegex(codex.CodexRequestError, "Codex API Key 未配置"):
+                codex.resolve_api_key()
+
+    def test_codex_resolve_api_key_reads_builtin_config(self):
+        with patch.object(codex, "CODEX_API_KEY", "config-key"):
+            self.assertEqual(codex.resolve_api_key(), "config-key")
+
+    def test_codex_create_client_uses_openai_compatible_settings(self):
+        calls = []
+
+        class FakeOpenAI:
+            def __init__(self, **kwargs):
+                calls.append(kwargs)
+
+        with patch.object(codex, "CODEX_API_KEY", CODEX_API_KEY):
+            with patch("openai.OpenAI", FakeOpenAI):
+                codex.create_client()
+
+        self.assertEqual(calls[0]["api_key"], CODEX_API_KEY)
+        self.assertEqual(calls[0]["base_url"], CODEX_BASE_URL)
+
+    def test_codex_request_by_type_uses_openai_client(self):
+        calls = []
+        fake_response = type(
+            "Response",
+            (),
+            {
+                "choices": [
+                    type(
+                        "Choice",
+                        (),
+                        {"message": type("Message", (), {"content": "[]"})()},
+                    )()
+                ]
+            },
+        )()
+        fake_client = type(
+            "Client",
+            (),
+            {
+                "chat": type(
+                    "Chat",
+                    (),
+                    {
+                        "completions": type(
+                            "Completions",
+                            (),
+                            {
+                                "create": lambda self, **kwargs: (
+                                    calls.append(kwargs) or fake_response
+                                )
+                            },
+                        )()
+                    },
+                )()
+            },
+        )()
+
+        with patch.object(codex, "create_client", return_value=fake_client):
+            content = codex.request_by_type("文本", TASK_JUBENSHA)
+
+        self.assertEqual(content, "[]")
+        self.assertEqual(calls[0]["model"], CODEX_MODEL)
 
 
 if __name__ == "__main__":

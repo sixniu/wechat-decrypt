@@ -32,6 +32,48 @@ class FreeDiscountNotifierTests(unittest.TestCase):
         self.assertIn("免单", kwargs["msg"])
         self.assertIn("如故", kwargs["msg"])
 
+    def test_notify_if_needed_mentions_all_when_source_chatroom_is_allowed(self):
+        wx = MagicMock()
+        notifier = FreeDiscountNotifier(
+            wx=wx,
+            target_chats=("通知群",),
+            source_chatroom_ids=("47388405090@chatroom",),
+            exact=True,
+        )
+
+        with patch("services.jubensha_booking.free_discount_notifier.at_all") as mocked_at_all:
+            notifier.notify_if_needed(
+                {
+                    "discount_type": "免单",
+                    "script_name": "如故",
+                    "booking_time": "2026-07-23 14:00",
+                },
+                source_chatroom_id="47388405090@chatroom",
+            )
+
+        mocked_at_all.assert_called_once()
+        self.assertEqual(mocked_at_all.call_args.kwargs["who"], "通知群")
+
+    def test_notify_if_needed_skips_when_source_chatroom_is_not_allowed(self):
+        wx = MagicMock()
+        notifier = FreeDiscountNotifier(
+            wx=wx,
+            target_chats=("通知群",),
+            source_chatroom_ids=("47388405090@chatroom",),
+        )
+
+        with patch("services.jubensha_booking.free_discount_notifier.at_all") as mocked_at_all:
+            notifier.notify_if_needed(
+                {
+                    "discount_type": "免单",
+                    "script_name": "如故",
+                    "booking_time": "2026-07-23 14:00",
+                },
+                source_chatroom_id="18614995060@chatroom",
+            )
+
+        mocked_at_all.assert_not_called()
+
     def test_notify_if_needed_skips_non_free_discount(self):
         wx = MagicMock()
         notifier = FreeDiscountNotifier(wx=wx)
