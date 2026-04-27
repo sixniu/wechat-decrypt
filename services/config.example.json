@@ -104,11 +104,11 @@
       },
       "free_discount_notice_poller": {
         "_comment": "从服务器轮询免单拼本通知任务。本地微信可用时启用，target_chats 为空时不启动。",
-        "enabled": false,
+        "enabled": true,
         "_enabled_comment": "是否启用服务器免单通知任务轮询。true=启用，false=关闭。",
         "api_base_url": "https://www.shisan.ink/api/booking/free-notices",
         "_api_base_url_comment": "script-kill-api 的免单通知内部接口基础地址。",
-        "token": "your-internal-token",
+        "token": "zcSQsXs5QHIJl0aGOxMI1GqC8knWeQC8",
         "_token_comment": "内部接口 token，需要和服务器 FREE_DISCOUNT_NOTICE_TOKEN 保持一致。",
         "interval_seconds": 10,
         "_interval_seconds_comment": "轮询间隔秒数。空列表响应很小，建议 5-15 秒。",
